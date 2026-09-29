@@ -38,6 +38,9 @@ PhasePanel is a local dashboard for live [Janitza](https://www.janitza.com/) mea
 
 You need a reachable GridVis REST service or Janitza devices accessible over Modbus/TCP, plus a modern browser. The desktop downloads include Node.js. Running from source requires Node.js 24 or newer and npm.
 
+> [!NOTE]
+> The bundled device model library currently includes only the UMG 604-PRO for direct Modbus/TCP connections. To use another model, add its register mapping under **Source settings → Manage device models**.
+
 ## Installation
 
 ### Option 1: Download a desktop release
@@ -52,7 +55,10 @@ Download the archive for your platform from [GitHub Releases](https://github.com
 
 On Linux, `PhasePanel/install-desktop.sh` can add an application menu entry. Run it again if you move the extracted directory.
 
-The desktop app starts a local server on `127.0.0.1` using an available port and opens the dashboard in your default browser. Closing the browser does not stop the server. The macOS app is ad hoc signed and not notarized; the Windows app is unsigned, so your operating system may show a warning on first launch.
+The desktop app starts a local server on `127.0.0.1` using an available port and opens the dashboard in your default browser. Closing the browser does not stop the server.
+
+> [!WARNING]
+> The macOS app is ad hoc signed and not notarized; the Windows app is unsigned, so your operating system may show a warning on first launch.
 
 ### Option 2: Run from source
 
@@ -92,10 +98,6 @@ The desktop server listens on `127.0.0.1` and chooses an available port by defau
 
 Use **Export dashboards** and **Import dashboard** in the sidebar to move dashboard layouts. Source connections and collected history are separate from those layout files.
 
-## License
-
-PhasePanel is licensed under the [GNU Affero General Public License v3.0](LICENSE) (`AGPL-3.0-only`). Distributed modified versions must provide corresponding source, and modified versions offered over a network must offer their source to users. The license permits commercial use, including paid hosting, when its terms are followed.
-
 ## Build and contribute
 
 The application source and build configuration live in [phasepanel/](phasepanel/). Run `npm run build` there to check the source. Platform build instructions are in [Windows](phasepanel/desktop/windows/README.md), [macOS](phasepanel/desktop/macos/README.md), and [Linux](phasepanel/desktop/linux/README.md). Add notes for each version to [CHANGELOG.md](CHANGELOG.md). The [release workflow](.github/workflows/release.yml) builds and smoke tests the desktop archives; a version tag matching `phasepanel/package.json` publishes them to GitHub Releases with that version's changelog section as the release notes.
@@ -106,4 +108,5 @@ Issues and pull requests are welcome.
 
 This project was created with the assistance of AI.
 
-PhasePanel is an independent project. It is not affiliated with, endorsed by, or connected to Janitza in any way.
+> [!IMPORTANT]
+> PhasePanel is an independent project. It is not affiliated with, endorsed by, or connected to Janitza in any way.
