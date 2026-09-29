@@ -1,0 +1,135 @@
+name: Build and release desktop apps
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: phasepanel/package-lock.json
+      - name: Verify release version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            expected="v$(node -p "JSON.parse(require('fs').readFileSync('phasepanel/package.json')).version")"
+            [[ "$GITHUB_REF_NAME" == "$expected" ]] || {
+              echo "Tag $GITHUB_REF_NAME must match package version $expected" >&2
+              exit 1
+            }
+          fi
+      - run: npm ci
+        working-directory: phasepanel
+      - run: node .github/scripts/release-notes.mjs '' phasepanel/package.json CHANGELOG.md > /dev/null
+      - run: npm run build
+        working-directory: phasepanel
+
+  build:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            platform: windows
+            name: PhasePanel-windows-x64
+            path: phasepanel/dist/windows/PhasePanel-v*-windows-x64.zip
+            bundle: dist/windows/PhasePanel
+          - os: ubuntu-24.04
+            platform: linux
+            name: PhasePanel-linux-x64
+            path: phasepanel/dist/linux/PhasePanel-v*-linux-x64.tar.gz
+            bundle: dist/linux/PhasePanel
+          - os: macos-15
+            platform: macos
+            name: PhasePanel-macos-arm64
+            path: phasepanel/dist/macos/PhasePanel-v*-macos-arm64.zip
+            bundle: dist/macos/PhasePanel.app/Contents/Resources
+          - os: macos-15-intel
+            platform: macos
+            name: PhasePanel-macos-x64
+            path: phasepanel/dist/macos/PhasePanel-v*-macos-x86_64.zip
+            bundle: dist/macos/PhasePanel.app/Contents/Resources
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: phasepanel/package-lock.json
+      - uses: actions/setup-dotnet@v6
+        if: matrix.platform == 'windows'
+        with:
+          dotnet-version: '10.0.x'
+      - run: npm ci
+        working-directory: phasepanel
+      - name: Build Windows app
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        working-directory: phasepanel
+        run: ./desktop/windows/build.ps1
+      - name: Build Linux app
+        if: matrix.platform == 'linux'
+        shell: bash
+        working-directory: phasepanel
+        run: bash desktop/linux/build.sh
+      - name: Build macOS app
+        if: matrix.platform == 'macos'
+        shell: bash
+        working-directory: phasepanel
+        run: bash desktop/macos/build.sh
+      - name: Test bundled server
+        shell: bash
+        working-directory: phasepanel
+        run: node desktop/smoke.mjs "${{ matrix.bundle }}"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.path }}
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.21.0'
+      - name: Prepare release notes
+        shell: bash
+        run: node .github/scripts/release-notes.mjs "$GITHUB_REF_NAME" phasepanel/package.json CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: PhasePanel-*
+          path: release-assets
+          merge-multiple: true
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          options=(--verify-tag --notes-file "$RUNNER_TEMP/release-notes.md")
+          if [[ "$GITHUB_REF_NAME" =~ -([Aa]lpha|[Bb]eta|[Rr][Cc]|[Pp]review|[Pp]re) ]]; then
+            options+=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" release-assets/* "${options[@]}"
