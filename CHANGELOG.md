@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.0 - 2026-09-30
+
+- Check direct device connections from Source settings, with separate ping, Modbus/TCP, and FTP results.
+- Match existing devices by project and device ID when updating source settings, preserving saved FTP passwords when host or FTP username changes.
+- Show the full application version in the sidebar footer.
+- Clarify supported device models and desktop app signing in the documentation.
+
 ## 1.0.0 - 2026-09-29
 
 - Build dashboards with movable and resizable measurement tiles, groups, graphs, and fullscreen rotation.
