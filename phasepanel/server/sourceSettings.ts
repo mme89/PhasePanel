@@ -247,11 +247,7 @@ export function updatedSourceSettings(
       ...input.modbus,
       devices: input.modbus.devices.map((device) => {
         const previous = current.modbus.devices.find(
-          (item) =>
-            item.project === device.project &&
-            item.id === device.id &&
-            item.host === device.host &&
-            item.ftpUsername === device.ftpUsername,
+          (item) => item.project === device.project && item.id === device.id,
         );
         const ftpPassword =
           device.clearFtpPassword || !device.ftpUsername
