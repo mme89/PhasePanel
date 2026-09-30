@@ -18,6 +18,23 @@ import { umg604Catalog, umg604CatalogByKey } from '../shared/umg604Catalog.js';
 const measurementKey = (measurement: string, channel: string) =>
   JSON.stringify([measurement, channel]);
 
+export function checkModbusTcp(host: string, port: number, timeoutMs: number) {
+  return new Promise<boolean>((resolve) => {
+    const socket = createConnection({ host, port });
+    let settled = false;
+    const finish = (reachable: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(reachable);
+    };
+    socket.setTimeout(timeoutMs, () => finish(false));
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+    socket.once('close', () => finish(false));
+  });
+}
+
 export function readModbusBlock(
   device: ModbusDevice,
   timeoutMs: number,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Dashboard } from '../shared/model';
 import { defaultModbusModel, type ModbusModel } from '../shared/modbusModels';
 import { measurementSources } from '../shared/totals';
@@ -31,6 +31,25 @@ type Settings = {
   modbus: { devices: DeviceRow[]; models: ModbusModel[]; timeoutMs: number };
   staleMs: number;
 };
+type DeviceCheck = {
+  id: number;
+  name: string;
+  host: string;
+  port: number;
+  ftpPort: number;
+  status: 'checking' | 'done' | 'error';
+  results?: ConnectionResults;
+  error?: string;
+};
+type ConnectionResult = {
+  status: 'ok' | 'failed' | 'skipped' | 'unavailable';
+  message: string;
+};
+type ConnectionResults = {
+  ping: ConnectionResult;
+  modbus: ConnectionResult;
+  ftp: ConnectionResult;
+};
 
 function deviceWebInterfaceUrl(host: string): string | undefined {
   const address = host.trim();
@@ -59,6 +78,8 @@ export function SourceSettingsDialog({
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [modelsOpen, setModelsOpen] = useState(false);
+  const [deviceCheck, setDeviceCheck] = useState<DeviceCheck | null>(null);
+  const nextDeviceCheckId = useRef(0);
   useEffect(() => {
     let mounted = true;
     void api<Settings>('/settings/source')
@@ -90,6 +111,56 @@ export function SourceSettingsDialog({
           },
         },
     );
+  }
+
+  async function checkDevice(device: DeviceRow) {
+    const id = ++nextDeviceCheckId.current;
+    setDeviceCheck({
+      id,
+      name: device.name,
+      host: device.host,
+      port: device.port,
+      ftpPort: device.ftpPort ?? 21,
+      status: 'checking',
+    });
+    try {
+      const results = await api<ConnectionResults>(
+        '/settings/source/modbus/check',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            project: device.project,
+            id: device.id,
+            host: device.host,
+            port: device.port,
+            ftpPort: device.ftpPort ?? 21,
+            ftpUsername: device.ftpUsername,
+            ftpPassword: device.ftpPassword,
+            clearFtpPassword: device.clearFtpPassword,
+          }),
+        },
+        8000,
+      );
+      setDeviceCheck((current) =>
+        current?.id === id
+          ? {
+              ...current,
+              status: 'done',
+              results,
+            }
+          : current,
+      );
+    } catch (failure) {
+      setDeviceCheck((current) =>
+        current?.id === id
+          ? {
+              ...current,
+              status: 'error',
+              error: message(failure),
+            }
+          : current,
+      );
+    }
   }
 
   function applyFtpCredentialsToAll(index: number) {
@@ -403,13 +474,14 @@ export function SourceSettingsDialog({
                             <th scope="col">Display name</th>
                             <th scope="col">Device IP / hostname</th>
                             <th scope="col">Port</th>
+                            <th scope="col">Connection</th>
                             <th scope="col" aria-label="Actions" />
                           </tr>
                         </thead>
                         <tbody>
                           {settings.modbus.devices.length === 0 && (
                             <tr>
-                              <td className="source-device-empty" colSpan={7}>
+                              <td className="source-device-empty" colSpan={8}>
                                 No Modbus devices added yet.
                               </td>
                             </tr>
@@ -521,6 +593,21 @@ export function SourceSettingsDialog({
                                     })
                                   }
                                 />
+                              </td>
+                              <td>
+                                <button
+                                  type="button"
+                                  aria-label={`Check connection for device ${index + 1}`}
+                                  disabled={
+                                    !device.host.trim() ||
+                                    !Number.isInteger(device.port) ||
+                                    device.port < 1 ||
+                                    device.port > 65535
+                                  }
+                                  onClick={() => void checkDevice(device)}
+                                >
+                                  Check
+                                </button>
                               </td>
                               <td>
                                 <button
@@ -739,6 +826,54 @@ export function SourceSettingsDialog({
             setModelsOpen(false);
           }}
         />
+      )}
+      {deviceCheck && (
+        <Modal
+          labelledBy="modbus-connection-title"
+          className="modbus-connection-shell"
+          onClose={() => setDeviceCheck(null)}
+        >
+          <section className="modal modbus-connection-modal">
+            <span className="eyebrow">DIRECT MODBUS/TCP</span>
+            <h2 id="modbus-connection-title">Device connection</h2>
+            <p>
+              {deviceCheck.name || 'Device'} · {deviceCheck.host}:
+              {deviceCheck.port}
+            </p>
+            <div className="modbus-connection-results" role="status">
+              {deviceCheck.status === 'checking' && <p>Checking…</p>}
+              {deviceCheck.status === 'error' && (
+                <p className="modbus-connection-failed">{deviceCheck.error}</p>
+              )}
+              {deviceCheck.results && (
+                <>
+                  {(
+                    [
+                      ['Ping', deviceCheck.results.ping],
+                      ['Modbus/TCP', deviceCheck.results.modbus],
+                      [
+                        `FTP (port ${deviceCheck.ftpPort})`,
+                        deviceCheck.results.ftp,
+                      ],
+                    ] as const
+                  ).map(([label, result]) => (
+                    <div className="modbus-connection-result" key={label}>
+                      <strong>{label}</strong>
+                      <span className={`modbus-connection-${result.status}`}>
+                        {result.message}
+                      </span>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+            <footer className="modal-actions">
+              <button type="button" onClick={() => setDeviceCheck(null)}>
+                Close
+              </button>
+            </footer>
+          </section>
+        </Modal>
       )}
     </>
   );

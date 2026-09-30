@@ -32,7 +32,8 @@ import {
   RestGridVis,
   type GridVis,
 } from './gridvis.js';
-import { ModbusSource, readModbusBlock } from './modbus.js';
+import { checkModbusTcp, ModbusSource, readModbusBlock } from './modbus.js';
+import { checkFtpLogin, pingHost } from './deviceConnection.js';
 import { HistorySampler } from './history.js';
 import { EventCollector } from './eventCollector.js';
 import {
@@ -59,7 +60,7 @@ import {
 import type { DeviceRecordingProfile } from '../shared/deviceHistory.js';
 import { RecordingSyncJobs } from './recordingSyncJobs.js';
 import type { DeviceEvent } from '../shared/deviceEvents.js';
-import type { ModbusDevice } from './sourceSettings.js';
+import { modbusDeviceSchema, type ModbusDevice } from './sourceSettings.js';
 import { collectorSettingsInput } from './collectorSettings.js';
 import {
   initialSourceSettings,
@@ -86,6 +87,11 @@ export async function buildApp(
     recordingRangeReader?: typeof readDeviceRecordingRanges;
     recordingBatchDownloader?: typeof downloadDeviceRecordingBatch;
     notificationSender?: NotificationSender;
+    connectionChecks?: {
+      ping: typeof pingHost;
+      modbus: typeof checkModbusTcp;
+      ftp: typeof checkFtpLogin;
+    };
   } = {},
 ) {
   const app = Fastify({
@@ -488,6 +494,70 @@ export async function buildApp(
   app.get('/api/settings/source', async () => {
     const { settings, revision } = currentSource();
     return publicSourceSettings(settings, revision);
+  });
+  app.post('/api/settings/source/modbus/check', async (request) => {
+    const input = z
+      .object({
+        project: z.string().max(200).optional(),
+        id: z.string().max(20).optional(),
+        host: modbusDeviceSchema.shape.host,
+        port: modbusDeviceSchema.shape.port,
+        ftpPort: modbusDeviceSchema.shape.ftpPort,
+        ftpUsername: modbusDeviceSchema.shape.ftpUsername,
+        ftpPassword: modbusDeviceSchema.shape.ftpPassword,
+        clearFtpPassword: z.boolean().optional(),
+      })
+      .parse(request.body);
+    const { settings } = currentSource();
+    const timeoutMs = Math.min(settings.modbus.timeoutMs, 5000);
+    const checks = options.connectionChecks ?? {
+      ping: pingHost,
+      modbus: checkModbusTcp,
+      ftp: checkFtpLogin,
+    };
+    const savedDevice = settings.modbus.devices.find(
+      (device) => device.project === input.project && device.id === input.id,
+    );
+    const ftpUsername = input.clearFtpPassword ? '' : (input.ftpUsername ?? '');
+    const ftpPassword = input.clearFtpPassword
+      ? ''
+      : input.ftpPassword ||
+        (ftpUsername ? savedDevice?.ftpPassword : '') ||
+        '';
+    const [ping, modbusReachable, ftpReachable] = await Promise.all([
+      checks.ping(input.host, timeoutMs),
+      checks.modbus(input.host, input.port, timeoutMs),
+      ftpUsername && ftpPassword
+        ? checks.ftp(
+            input.host,
+            input.ftpPort ?? 21,
+            ftpUsername,
+            ftpPassword,
+            timeoutMs,
+          )
+        : Promise.resolve(null),
+    ]);
+    return {
+      ping,
+      modbus: modbusReachable
+        ? { status: 'ok', message: 'Modbus/TCP port is reachable.' }
+        : {
+            status: 'failed',
+            message: 'Cannot connect to the Modbus/TCP port.',
+          },
+      ftp:
+        ftpReachable === null
+          ? {
+              status: ftpUsername || ftpPassword ? 'failed' : 'skipped',
+              message:
+                ftpUsername || ftpPassword
+                  ? 'FTP username and password are both required.'
+                  : 'FTP login is not configured.',
+            }
+          : ftpReachable
+            ? { status: 'ok', message: 'FTP login succeeded.' }
+            : { status: 'failed', message: 'FTP connection or login failed.' },
+    };
   });
   app.put(
     '/api/settings/source',

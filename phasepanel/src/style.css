@@ -2912,7 +2912,7 @@ main {
 }
 .source-device-table {
   width: 100%;
-  min-width: 980px;
+  min-width: 1100px;
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -2926,24 +2926,27 @@ main {
   white-space: nowrap;
 }
 .source-device-table th:nth-child(1) {
-  width: 15%;
+  width: 13%;
 }
 .source-device-table th:nth-child(2) {
-  width: 17%;
+  width: 15%;
 }
 .source-device-table th:nth-child(3) {
-  width: 11%;
-}
-.source-device-table th:nth-child(4) {
-  width: 16%;
-}
-.source-device-table th:nth-child(5) {
-  width: 26%;
-}
-.source-device-table th:nth-child(6) {
   width: 9%;
 }
+.source-device-table th:nth-child(4) {
+  width: 14%;
+}
+.source-device-table th:nth-child(5) {
+  width: 27%;
+}
+.source-device-table th:nth-child(6) {
+  width: 8%;
+}
 .source-device-table th:nth-child(7) {
+  width: 8%;
+}
+.source-device-table th:nth-child(8) {
   width: 6%;
 }
 .source-device-table td {
@@ -2972,6 +2975,41 @@ main {
 }
 .source-device-table td:last-child {
   text-align: center;
+}
+.source-device-table td:nth-child(7) button {
+  padding: 6px 9px;
+}
+.modbus-connection-shell {
+  width: min(430px, calc(100vw - 40px));
+}
+.modbus-connection-modal {
+  width: 100%;
+}
+.modbus-connection-results {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0;
+  font-size: 12px;
+}
+.modbus-connection-result {
+  display: grid;
+  gap: 4px;
+}
+.modbus-connection-result strong {
+  color: #5b6c57;
+}
+.modbus-connection-result span {
+  line-height: 1.35;
+}
+.modbus-connection-ok {
+  color: #28733b;
+}
+.modbus-connection-failed {
+  color: #a03932;
+}
+.modbus-connection-skipped,
+.modbus-connection-unavailable {
+  color: #76846c;
 }
 .source-device-ftp-section h3 {
   margin: 4px 0 0;
