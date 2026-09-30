@@ -1,11 +1,10 @@
 # <img src="phasepanel/public/favicon.svg" alt="" width="32" height="32"> PhasePanel
 
 [![GitHub release](https://img.shields.io/github/v/release/mme89/PhasePanel?label=Latest%20Release&style=for-the-badge)](https://github.com/mme89/PhasePanel/releases/latest)
-[![GitHub downloads](https://img.shields.io/github/downloads/mme89/PhasePanel/total?label=Total%20Downloads&style=for-the-badge)](https://github.com/mme89/PhasePanel/releases)
 [![License](https://img.shields.io/github/license/mme89/PhasePanel?style=for-the-badge)](https://github.com/mme89/PhasePanel)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=for-the-badge)](https://github.com/mme89/PhasePanel)
 
-PhasePanel is a local dashboard for live [Janitza](https://www.janitza.com/) measurements. Connect it to GridVis through its REST API or directly to devices over Modbus/TCP, then build dashboards in your browser. The desktop downloads bundle the server and Node.js runtime; the dashboard opens in your default browser.
+PhasePanel is a local dashboard for live [Janitza](https://www.janitza.com/) measurements. Connect it to GridVis through its REST API or directly to devices over Modbus/TCP, then build dashboards in your browser. Each desktop download includes the server and Node.js runtime. The dashboard opens in your default browser.
 
 ## Screenshots
 
