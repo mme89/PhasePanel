@@ -64,6 +64,26 @@ try {
   const page = await (await fetch(`http://127.0.0.1:${port}/`)).text();
   if (!page.includes('<title>PhasePanel'))
     throw new Error('Bundled frontend was not served.');
+  const asset = page.match(/<script[^>]+src="([^"]+)"/)?.[1];
+  if (!asset || !(await fetch(new URL(asset, `http://127.0.0.1:${port}`))).ok)
+    throw new Error('Bundled frontend JavaScript was not served.');
+  const created = await fetch(`http://127.0.0.1:${port}/api/dashboards`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'Smoke check',
+      refreshSeconds: 5,
+      widgets: [],
+    }),
+  });
+  if (created.status !== 201)
+    throw new Error('Bundled server could not save a dashboard.');
+  const dashboard = await created.json();
+  const saved = await fetch(
+    `http://127.0.0.1:${port}/api/dashboards/${dashboard.id}`,
+  );
+  if (!saved.ok || (await saved.json()).name !== 'Smoke check')
+    throw new Error('Bundled server could not read the saved dashboard.');
   child.stdin.end();
   const exited =
     child.exitCode !== null ||

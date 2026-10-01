@@ -26,6 +26,7 @@ cp package.json "$resources_dir/app/"
 cp LICENSE "$resources_dir/"
 cp package.json package-lock.json "$staging_dir/"
 (cd "$staging_dir" && npm ci --omit=dev --prefer-offline --no-audit)
+node desktop/prune-dependencies.mjs "$staging_dir/node_modules"
 cp -R "$staging_dir/node_modules" "$resources_dir/app/"
 curl -fsSL "$release_url/SHASUMS256.txt" -o "$staging_dir/SHASUMS256.txt"
 curl -fsSL "$release_url/$runtime_name.tar.gz" -o "$staging_dir/$runtime_name.tar.gz"

@@ -52,6 +52,8 @@ Download the archive for your platform from [GitHub Releases](https://github.com
 | macOS Apple Silicon or Intel | Open `PhasePanel.app`. Use the menu bar icon to reopen or quit it. |
 | Linux x64 | Run `PhasePanel/phasepanel`. Run `PhasePanel/phasepanel --stop` to stop the server. |
 
+The Windows ZIP contains many files because it includes everything needed to run the local server: `PhasePanel.exe` is the launcher and tray app, `node.exe` is the bundled Node.js runtime, and `app/node_modules` contains the server's dependencies. These files let you extract and run PhasePanel without installing Node.js or npm yourself. Keep the entire extracted `PhasePanel` folder together; copying only `PhasePanel.exe` or deleting `node.exe` or `node_modules` will prevent it from working.
+
 On Linux, `PhasePanel/install-desktop.sh` can add an application menu entry. Run it again if you move the extracted directory.
 
 The desktop app starts a local server on `127.0.0.1` using an available port and opens the dashboard in your default browser. Closing the browser does not stop the server.

@@ -25,6 +25,8 @@ try {
         npm ci --omit=dev --prefer-offline --no-audit
         if ($LASTEXITCODE -ne 0) { throw 'Production dependency install failed.' }
     } finally { Pop-Location }
+    node 'desktop/prune-dependencies.mjs' (Join-Path $stagingDir 'node_modules')
+    if ($LASTEXITCODE -ne 0) { throw 'Production dependency pruning failed.' }
     Copy-Item -Recurse (Join-Path $stagingDir 'node_modules') (Join-Path $bundleDir 'app')
 
     $archive = Join-Path $stagingDir "$runtimeName.zip"
