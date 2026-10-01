@@ -1443,7 +1443,7 @@ export default function App() {
             </div>
             {config?.mock && <p>Simulated values for exploration.</p>}
             <div className="sidebar-foot">
-              © MME89 2026 <span>v1.1.0</span>
+              © MME89 2026 <span>v1.1.1</span>
             </div>
           </div>
         </aside>

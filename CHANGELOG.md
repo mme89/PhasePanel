@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1 - 2026-10-01
+
+- Reduce desktop release size by excluding frontend-only packages from production dependencies and pruning dependency tests, examples, type declarations, and source maps while preserving runtime files and license notices.
+- Explain the bundled Node.js runtime and dependencies in the Windows download instructions.
+
 ## 1.1.0 - 2026-09-30
 
 - Check direct device connections from Source settings, with separate ping, Modbus/TCP, and FTP results.
