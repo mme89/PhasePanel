@@ -1,3 +1,4 @@
+import { appVersion, createUpdateChecker } from './updates.js';
 import {
   historyKeys,
   readingBindings,
@@ -87,6 +88,7 @@ export async function buildApp(
     recordingRangeReader?: typeof readDeviceRecordingRanges;
     recordingBatchDownloader?: typeof downloadDeviceRecordingBatch;
     notificationSender?: NotificationSender;
+    updateFetcher?: typeof fetch;
     connectionChecks?: {
       ping: typeof pingHost;
       modbus: typeof checkModbusTcp;
@@ -276,8 +278,20 @@ export async function buildApp(
   });
   const idFrom = (params: unknown) =>
     z.object({ id: z.string().uuid() }).parse(params).id;
+  const checkUpdates = createUpdateChecker(options.updateFetcher);
+  app.post('/api/updates/check', async (_request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    try {
+      return await checkUpdates();
+    } catch {
+      return reply
+        .code(502)
+        .send({ message: 'Unable to check for updates. Try again later.' });
+    }
+  });
   app.get('/api/health', async () => ({ status: 'ok' }));
   app.get('/api/config', async () => ({
+    version: appVersion,
     mock: currentSource().settings.source === 'mock',
     source: currentSource().settings.source,
     staleMs: currentSource().settings.staleMs,

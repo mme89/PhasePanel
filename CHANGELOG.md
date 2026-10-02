@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.2 - 2026-10-02
+
+- Consolidate sidebar settings into one Settings button that opens settings-only navigation, with Back to dashboards restoring the current dashboard or history view. Support both expanded and collapsed sidebars.
+- Add manual update checks against the latest GitHub release, showing the installed version, available updates, and release download links, with clear results for missing releases and connection failures.
+
 ## 1.1.1 - 2026-10-01
 
 - Reduce desktop release size by excluding frontend-only packages from production dependencies and pruning dependency tests, examples, type declarations, and source maps while preserving runtime files and license notices.

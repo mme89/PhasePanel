@@ -1,3 +1,4 @@
+import { UpdatesDialog } from './UpdatesDialog';
 import { LogTileEditor, LogTileView } from './LogTile';
 import type { LogTile } from '../shared/model';
 import { DashboardBackgroundEditor } from './DashboardBackgroundEditor';
@@ -474,6 +475,7 @@ export default function App() {
     staleMs: number;
     sourceRevision: number;
     hasSavedDeviceHistory?: boolean;
+    version?: string;
     storageSettingsVisible?: boolean;
     serverSettingsVisible?: boolean;
   }>();
@@ -505,6 +507,7 @@ export default function App() {
   const [dashboardSettingsDialog, setDashboardSettingsDialog] = useState<
     'general' | 'shared'
   >();
+  const [updatesOpen, setUpdatesOpen] = useState(false);
   const [sourceSettingsOpen, setSourceSettingsOpen] = useState(false);
   const [collectorSettingsOpen, setCollectorSettingsOpen] = useState(false);
   const [storageSettingsOpen, setStorageSettingsOpen] = useState(false);
@@ -515,6 +518,7 @@ export default function App() {
   const [historyVersion, setHistoryVersion] = useState(0);
   const [exportOpen, setExportOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [settingsNavigationOpen, setSettingsNavigationOpen] = useState(false);
   const [draggedDashboardId, setDraggedDashboardId] = useState<string>();
   const [dropTarget, setDropTarget] = useState<{
     id: string;
@@ -647,6 +651,7 @@ export default function App() {
         staleMs: number;
         sourceRevision: number;
         hasSavedDeviceHistory?: boolean;
+        version?: string;
         storageSettingsVisible?: boolean;
         serverSettingsVisible?: boolean;
       }>('/config'),
@@ -1043,131 +1048,135 @@ export default function App() {
               </svg>
             </button>
           </div>
-          <div className="sidebar-dashboard-section">
-            <div className="nav-heading">
-              <span>DASHBOARDS</span>
-              <span>{dashboards.length.toString().padStart(2, '0')}</span>
+          {!settingsNavigationOpen && (
+            <div className="sidebar-dashboard-section">
+              <div className="nav-heading">
+                <span>DASHBOARDS</span>
+                <span>{dashboards.length.toString().padStart(2, '0')}</span>
+              </div>
+              <nav aria-label="Dashboards">
+                {dashboards.map((d) => (
+                  <button
+                    className={`nav-item ${d.id === activeId && !historyOpen && !eventHistoryOpen && !deviceHistoryOpen ? 'selected' : ''} ${d.id === draggedDashboardId ? 'dragging' : ''} ${dropTarget?.id === d.id ? (dropTarget.after ? 'drop-after' : 'drop-before') : ''}`}
+                    key={d.id}
+                    aria-label={d.name}
+                    aria-current={
+                      d.id === activeId &&
+                      !historyOpen &&
+                      !eventHistoryOpen &&
+                      !deviceHistoryOpen
+                        ? 'page'
+                        : undefined
+                    }
+                    title={`${d.name} — drag to reorder, or use Alt+Arrow keys`}
+                    disabled={editing || busy}
+                    draggable={!editing && !busy}
+                    onDragStart={(event) => {
+                      setDraggedDashboardId(d.id);
+                      event.dataTransfer.effectAllowed = 'move';
+                      event.dataTransfer.setData('text/plain', d.id);
+                    }}
+                    onDragOver={(event) => {
+                      if (!draggedDashboardId || draggedDashboardId === d.id)
+                        return;
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = 'move';
+                      const bounds =
+                        event.currentTarget.getBoundingClientRect();
+                      const after =
+                        event.clientY > bounds.top + bounds.height / 2;
+                      setDropTarget((current) =>
+                        current?.id === d.id && current.after === after
+                          ? current
+                          : { id: d.id, after },
+                      );
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      const bounds =
+                        event.currentTarget.getBoundingClientRect();
+                      const after =
+                        event.clientY > bounds.top + bounds.height / 2;
+                      if (draggedDashboardId)
+                        void saveDashboardOrder(
+                          moveDashboard(
+                            dashboards,
+                            draggedDashboardId,
+                            d.id,
+                            after,
+                          ),
+                        );
+                      setDraggedDashboardId(undefined);
+                      setDropTarget(undefined);
+                    }}
+                    onDragEnd={() => {
+                      setDraggedDashboardId(undefined);
+                      setDropTarget(undefined);
+                    }}
+                    onKeyDown={(event) => {
+                      if (!event.altKey || editing || busy) return;
+                      const direction =
+                        event.key === 'ArrowUp'
+                          ? -1
+                          : event.key === 'ArrowDown'
+                            ? 1
+                            : 0;
+                      if (!direction) return;
+                      event.preventDefault();
+                      const index = dashboards.findIndex(
+                        (item) => item.id === d.id,
+                      );
+                      const target = dashboards[index + direction];
+                      if (target)
+                        void saveDashboardOrder(
+                          moveDashboard(
+                            dashboards,
+                            d.id,
+                            target.id,
+                            direction > 0,
+                          ),
+                        );
+                    }}
+                    onClick={() => {
+                      if (alarmFocusId) resumeRotation();
+                      setActiveId(d.id);
+                      setHistoryOpen(false);
+                      setEventHistoryOpen(false);
+                      setDeviceHistoryOpen(false);
+                      setError('');
+                    }}
+                  >
+                    <span className="nav-drag-handle" aria-hidden="true">
+                      ⋮⋮
+                    </span>
+                    <span className="grid-icon" aria-hidden="true">
+                      ▦
+                    </span>
+                    <span className="nav-item-name">{d.name}</span>
+                    {d.id === activeId &&
+                      !historyOpen &&
+                      !eventHistoryOpen &&
+                      !deviceHistoryOpen && <span className="nav-indicator" />}
+                  </button>
+                ))}
+              </nav>
+              <button
+                className="new-dashboard"
+                aria-label="New dashboard"
+                title={sidebarCollapsed ? 'New dashboard' : undefined}
+                disabled={editing || busy}
+                onClick={() => {
+                  setNewName('');
+                  setDialog('create');
+                }}
+              >
+                <span className="new-dashboard-icon" aria-hidden="true">
+                  ＋
+                </span>
+                <span className="new-dashboard-label">New dashboard</span>
+              </button>
             </div>
-            <nav aria-label="Dashboards">
-              {dashboards.map((d) => (
-                <button
-                  className={`nav-item ${d.id === activeId && !historyOpen && !eventHistoryOpen && !deviceHistoryOpen ? 'selected' : ''} ${d.id === draggedDashboardId ? 'dragging' : ''} ${dropTarget?.id === d.id ? (dropTarget.after ? 'drop-after' : 'drop-before') : ''}`}
-                  key={d.id}
-                  aria-label={d.name}
-                  aria-current={
-                    d.id === activeId &&
-                    !historyOpen &&
-                    !eventHistoryOpen &&
-                    !deviceHistoryOpen
-                      ? 'page'
-                      : undefined
-                  }
-                  title={`${d.name} — drag to reorder, or use Alt+Arrow keys`}
-                  disabled={editing || busy}
-                  draggable={!editing && !busy}
-                  onDragStart={(event) => {
-                    setDraggedDashboardId(d.id);
-                    event.dataTransfer.effectAllowed = 'move';
-                    event.dataTransfer.setData('text/plain', d.id);
-                  }}
-                  onDragOver={(event) => {
-                    if (!draggedDashboardId || draggedDashboardId === d.id)
-                      return;
-                    event.preventDefault();
-                    event.dataTransfer.dropEffect = 'move';
-                    const bounds = event.currentTarget.getBoundingClientRect();
-                    const after =
-                      event.clientY > bounds.top + bounds.height / 2;
-                    setDropTarget((current) =>
-                      current?.id === d.id && current.after === after
-                        ? current
-                        : { id: d.id, after },
-                    );
-                  }}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    const bounds = event.currentTarget.getBoundingClientRect();
-                    const after =
-                      event.clientY > bounds.top + bounds.height / 2;
-                    if (draggedDashboardId)
-                      void saveDashboardOrder(
-                        moveDashboard(
-                          dashboards,
-                          draggedDashboardId,
-                          d.id,
-                          after,
-                        ),
-                      );
-                    setDraggedDashboardId(undefined);
-                    setDropTarget(undefined);
-                  }}
-                  onDragEnd={() => {
-                    setDraggedDashboardId(undefined);
-                    setDropTarget(undefined);
-                  }}
-                  onKeyDown={(event) => {
-                    if (!event.altKey || editing || busy) return;
-                    const direction =
-                      event.key === 'ArrowUp'
-                        ? -1
-                        : event.key === 'ArrowDown'
-                          ? 1
-                          : 0;
-                    if (!direction) return;
-                    event.preventDefault();
-                    const index = dashboards.findIndex(
-                      (item) => item.id === d.id,
-                    );
-                    const target = dashboards[index + direction];
-                    if (target)
-                      void saveDashboardOrder(
-                        moveDashboard(
-                          dashboards,
-                          d.id,
-                          target.id,
-                          direction > 0,
-                        ),
-                      );
-                  }}
-                  onClick={() => {
-                    if (alarmFocusId) resumeRotation();
-                    setActiveId(d.id);
-                    setHistoryOpen(false);
-                    setEventHistoryOpen(false);
-                    setDeviceHistoryOpen(false);
-                    setError('');
-                  }}
-                >
-                  <span className="nav-drag-handle" aria-hidden="true">
-                    ⋮⋮
-                  </span>
-                  <span className="grid-icon" aria-hidden="true">
-                    ▦
-                  </span>
-                  <span className="nav-item-name">{d.name}</span>
-                  {d.id === activeId &&
-                    !historyOpen &&
-                    !eventHistoryOpen &&
-                    !deviceHistoryOpen && <span className="nav-indicator" />}
-                </button>
-              ))}
-            </nav>
-            <button
-              className="new-dashboard"
-              aria-label="New dashboard"
-              title={sidebarCollapsed ? 'New dashboard' : undefined}
-              disabled={editing || busy}
-              onClick={() => {
-                setNewName('');
-                setDialog('create');
-              }}
-            >
-              <span className="new-dashboard-icon" aria-hidden="true">
-                ＋
-              </span>
-              <span className="new-dashboard-label">New dashboard</span>
-            </button>
-          </div>
+          )}
           <input
             ref={importFile}
             type="file"
@@ -1180,200 +1189,197 @@ export default function App() {
               if (file) void uploadDashboard(file);
             }}
           />
-          <div className="sidebar-bottom">
-            <div className="sidebar-history">
-              <div className="sidebar-section-heading">HISTORY</div>
-              <button
-                className={`sidebar-utility-button ${historyOpen ? 'selected' : ''}`}
-                aria-label="Value history"
-                aria-current={historyOpen ? 'page' : undefined}
-                title={sidebarCollapsed ? 'Value history' : undefined}
-                disabled={editing || busy || booting}
-                onClick={() => {
-                  setHistoryJump(undefined);
-                  setHistoryOpen(true);
-                  setEventHistoryOpen(false);
-                  setDeviceHistoryOpen(false);
-                  setRotationSeconds(0);
-                }}
+          <div
+            className={`sidebar-bottom ${settingsNavigationOpen ? 'settings-navigation' : ''}`}
+          >
+            {!settingsNavigationOpen && (
+              <>
+                <div className="sidebar-history">
+                  <div className="sidebar-section-heading">HISTORY</div>
+                  <button
+                    className={`sidebar-utility-button ${historyOpen ? 'selected' : ''}`}
+                    aria-label="Value history"
+                    aria-current={historyOpen ? 'page' : undefined}
+                    title={sidebarCollapsed ? 'Value history' : undefined}
+                    disabled={editing || busy || booting}
+                    onClick={() => {
+                      setHistoryJump(undefined);
+                      setHistoryOpen(true);
+                      setEventHistoryOpen(false);
+                      setDeviceHistoryOpen(false);
+                      setRotationSeconds(0);
+                    }}
+                  >
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M3 18h18M4 14l5-5 4 3 7-8" />
+                    </svg>
+                    <span className="sidebar-utility-label">Value history</span>
+                  </button>
+                  <button
+                    className={`sidebar-utility-button ${eventHistoryOpen ? 'selected' : ''}`}
+                    aria-label="Event history"
+                    aria-current={eventHistoryOpen ? 'page' : undefined}
+                    title={
+                      config?.source !== 'modbus'
+                        ? 'Event history requires Direct Modbus/TCP with FTP.'
+                        : sidebarCollapsed
+                          ? 'Event history'
+                          : undefined
+                    }
+                    disabled={
+                      editing || busy || booting || config?.source !== 'modbus'
+                    }
+                    onClick={() => {
+                      setEventHistoryOpen(true);
+                      setHistoryOpen(false);
+                      setDeviceHistoryOpen(false);
+                      setRotationSeconds(0);
+                    }}
+                  >
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M12 3 2.5 20h19L12 3ZM12 9v5m0 3h.01" />
+                    </svg>
+                    <span className="sidebar-utility-label">Event history</span>
+                  </button>
+                  <button
+                    className={`sidebar-utility-button ${deviceHistoryOpen ? 'selected' : ''}`}
+                    aria-label="Device history"
+                    aria-current={deviceHistoryOpen ? 'page' : undefined}
+                    title={sidebarCollapsed ? 'Device history' : undefined}
+                    disabled={
+                      editing ||
+                      busy ||
+                      booting ||
+                      (config?.source !== 'modbus' &&
+                        !config?.hasSavedDeviceHistory)
+                    }
+                    onClick={() => {
+                      setDeviceHistoryOpen(true);
+                      setHistoryOpen(false);
+                      setEventHistoryOpen(false);
+                      setRotationSeconds(0);
+                    }}
+                  >
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M3 18h18M4 14l4-4 4 2 4-6 4 2M4 4h16" />
+                    </svg>
+                    <span className="sidebar-utility-label">
+                      Device history
+                    </span>
+                  </button>
+                </div>
+                <div className="sidebar-tools">
+                  <div className="sidebar-section-heading">DASHBOARD TOOLS</div>
+                  <button
+                    className="sidebar-utility-button"
+                    aria-label="Export dashboards"
+                    title={sidebarCollapsed ? 'Export dashboards' : undefined}
+                    disabled={
+                      editing || busy || booting || dashboards.length === 0
+                    }
+                    onClick={() => setExportOpen(true)}
+                  >
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M12 4v12m-4-4 4 4 4-4M4 18v2h16v-2" />
+                    </svg>
+                    <span className="sidebar-utility-label">
+                      Export dashboards
+                    </span>
+                  </button>
+                  <button
+                    className="sidebar-utility-button"
+                    aria-label="Import dashboard"
+                    title={sidebarCollapsed ? 'Import dashboard' : undefined}
+                    disabled={editing || busy || booting}
+                    onClick={() => importFile.current?.click()}
+                  >
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M12 16V4m-4 4 4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
+                    </svg>
+                    <span className="sidebar-utility-label">
+                      Import dashboard
+                    </span>
+                  </button>
+                </div>
+                <div className="sidebar-settings">
+                  <button
+                    className="sidebar-utility-button"
+                    aria-label="Settings"
+                    title={sidebarCollapsed ? 'Settings' : undefined}
+                    aria-controls="sidebar-settings-navigation"
+                    aria-expanded={settingsNavigationOpen}
+                    disabled={editing || busy || booting}
+                    onClick={() => setSettingsNavigationOpen(true)}
+                  >
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M4 7h8m4 0h4M4 17h4m4 0h8" />
+                      <circle cx="14" cy="7" r="2" />
+                      <circle cx="10" cy="17" r="2" />
+                    </svg>
+                    <span className="sidebar-utility-label">Settings</span>
+                  </button>
+                </div>
+              </>
+            )}
+            {settingsNavigationOpen && (
+              <nav
+                id="sidebar-settings-navigation"
+                className="sidebar-settings"
+                aria-label="Settings"
               >
-                <svg
-                  aria-hidden="true"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M3 18h18M4 14l5-5 4 3 7-8" />
-                </svg>
-                <span className="sidebar-utility-label">Value history</span>
-              </button>
-              <button
-                className={`sidebar-utility-button ${eventHistoryOpen ? 'selected' : ''}`}
-                aria-label="Event history"
-                aria-current={eventHistoryOpen ? 'page' : undefined}
-                title={
-                  config?.source !== 'modbus'
-                    ? 'Event history requires Direct Modbus/TCP with FTP.'
-                    : sidebarCollapsed
-                      ? 'Event history'
-                      : undefined
-                }
-                disabled={
-                  editing || busy || booting || config?.source !== 'modbus'
-                }
-                onClick={() => {
-                  setEventHistoryOpen(true);
-                  setHistoryOpen(false);
-                  setDeviceHistoryOpen(false);
-                  setRotationSeconds(0);
-                }}
-              >
-                <svg
-                  aria-hidden="true"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M12 3 2.5 20h19L12 3ZM12 9v5m0 3h.01" />
-                </svg>
-                <span className="sidebar-utility-label">Event history</span>
-              </button>
-              <button
-                className={`sidebar-utility-button ${deviceHistoryOpen ? 'selected' : ''}`}
-                aria-label="Device history"
-                aria-current={deviceHistoryOpen ? 'page' : undefined}
-                title={sidebarCollapsed ? 'Device history' : undefined}
-                disabled={
-                  editing ||
-                  busy ||
-                  booting ||
-                  (config?.source !== 'modbus' &&
-                    !config?.hasSavedDeviceHistory)
-                }
-                onClick={() => {
-                  setDeviceHistoryOpen(true);
-                  setHistoryOpen(false);
-                  setEventHistoryOpen(false);
-                  setRotationSeconds(0);
-                }}
-              >
-                <svg
-                  aria-hidden="true"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M3 18h18M4 14l4-4 4 2 4-6 4 2M4 4h16" />
-                </svg>
-                <span className="sidebar-utility-label">Device history</span>
-              </button>
-            </div>
-            <div className="sidebar-tools">
-              <div className="sidebar-section-heading">DASHBOARD TOOLS</div>
-              <button
-                className="sidebar-utility-button"
-                aria-label="Export dashboards"
-                title={sidebarCollapsed ? 'Export dashboards' : undefined}
-                disabled={editing || busy || booting || dashboards.length === 0}
-                onClick={() => setExportOpen(true)}
-              >
-                <svg
-                  aria-hidden="true"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M12 4v12m-4-4 4 4 4-4M4 18v2h16v-2" />
-                </svg>
-                <span className="sidebar-utility-label">Export dashboards</span>
-              </button>
-              <button
-                className="sidebar-utility-button"
-                aria-label="Import dashboard"
-                title={sidebarCollapsed ? 'Import dashboard' : undefined}
-                disabled={editing || busy || booting}
-                onClick={() => importFile.current?.click()}
-              >
-                <svg
-                  aria-hidden="true"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M12 16V4m-4 4 4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
-                </svg>
-                <span className="sidebar-utility-label">Import dashboard</span>
-              </button>
-            </div>
-            <div className="sidebar-settings">
-              <div className="sidebar-section-heading">SETTINGS</div>
-              <button
-                className="sidebar-utility-button"
-                aria-label="Source settings"
-                title={sidebarCollapsed ? 'Source settings' : undefined}
-                disabled={editing || busy || booting}
-                onClick={() => setSourceSettingsOpen(true)}
-              >
-                <svg
-                  aria-hidden="true"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M4 7h8m4 0h4M4 17h4m4 0h8" />
-                  <circle cx="14" cy="7" r="2" />
-                  <circle cx="10" cy="17" r="2" />
-                </svg>
-                <span className="sidebar-utility-label">Source settings</span>
-              </button>
-              <button
-                className="sidebar-utility-button"
-                aria-label="Collector settings"
-                title={sidebarCollapsed ? 'Collector settings' : undefined}
-                disabled={editing || busy || booting}
-                onClick={() => setCollectorSettingsOpen(true)}
-              >
-                <svg
-                  aria-hidden="true"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <circle cx="12" cy="12" r="9" />
-                  <path d="M12 7v5l3 2M3 12h2m14 0h2" />
-                </svg>
-                <span className="sidebar-utility-label">
-                  Collector settings
-                </span>
-              </button>
-              {config?.storageSettingsVisible && (
                 <button
-                  className="sidebar-utility-button"
-                  aria-label="Data location"
-                  title={sidebarCollapsed ? 'Data location' : undefined}
-                  disabled={editing || busy || booting}
-                  onClick={() => setStorageSettingsOpen(true)}
+                  className="sidebar-utility-button sidebar-settings-back"
+                  aria-label="Back to dashboards"
+                  title={sidebarCollapsed ? 'Back to dashboards' : undefined}
+                  onClick={() => setSettingsNavigationOpen(false)}
                 >
                   <svg
                     aria-hidden="true"
@@ -1384,18 +1390,19 @@ export default function App() {
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   >
-                    <path d="M3 7h7l2 2h9v10H3zM3 7V5h8l2 2" />
+                    <path d="m12 5-7 7 7 7M5 12h14" />
                   </svg>
-                  <span className="sidebar-utility-label">Data location</span>
+                  <span className="sidebar-utility-label">
+                    Back to dashboards
+                  </span>
                 </button>
-              )}
-              {config?.serverSettingsVisible && (
+                <div className="sidebar-section-heading">SETTINGS</div>
                 <button
                   className="sidebar-utility-button"
-                  aria-label="Server address"
-                  title={sidebarCollapsed ? 'Server address' : undefined}
+                  aria-label="Source settings"
+                  title={sidebarCollapsed ? 'Source settings' : undefined}
                   disabled={editing || busy || booting}
-                  onClick={() => setServerSettingsOpen(true)}
+                  onClick={() => setSourceSettingsOpen(true)}
                 >
                   <svg
                     aria-hidden="true"
@@ -1406,33 +1413,124 @@ export default function App() {
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   >
-                    <rect x="3" y="4" width="18" height="16" rx="2" />
-                    <path d="M3 9h18M8 14h2m4 0h2" />
+                    <path d="M4 7h8m4 0h4M4 17h4m4 0h8" />
+                    <circle cx="14" cy="7" r="2" />
+                    <circle cx="10" cy="17" r="2" />
                   </svg>
-                  <span className="sidebar-utility-label">Server address</span>
+                  <span className="sidebar-utility-label">Source settings</span>
                 </button>
-              )}
-              <button
-                className="sidebar-utility-button"
-                aria-label="Notifications"
-                title={sidebarCollapsed ? 'Notifications' : undefined}
-                disabled={editing || busy || booting}
-                onClick={() => setNotificationSettingsOpen(true)}
-              >
-                <svg
-                  aria-hidden="true"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+                <button
+                  className="sidebar-utility-button"
+                  aria-label="Collector settings"
+                  title={sidebarCollapsed ? 'Collector settings' : undefined}
+                  disabled={editing || busy || booting}
+                  onClick={() => setCollectorSettingsOpen(true)}
                 >
-                  <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
-                </svg>
-                <span className="sidebar-utility-label">Notifications</span>
-              </button>
-            </div>
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7v5l3 2M3 12h2m14 0h2" />
+                  </svg>
+                  <span className="sidebar-utility-label">
+                    Collector settings
+                  </span>
+                </button>
+                {config?.storageSettingsVisible && (
+                  <button
+                    className="sidebar-utility-button"
+                    aria-label="Data location"
+                    title={sidebarCollapsed ? 'Data location' : undefined}
+                    disabled={editing || busy || booting}
+                    onClick={() => setStorageSettingsOpen(true)}
+                  >
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M3 7h7l2 2h9v10H3zM3 7V5h8l2 2" />
+                    </svg>
+                    <span className="sidebar-utility-label">Data location</span>
+                  </button>
+                )}
+                {config?.serverSettingsVisible && (
+                  <button
+                    className="sidebar-utility-button"
+                    aria-label="Server address"
+                    title={sidebarCollapsed ? 'Server address' : undefined}
+                    disabled={editing || busy || booting}
+                    onClick={() => setServerSettingsOpen(true)}
+                  >
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <rect x="3" y="4" width="18" height="16" rx="2" />
+                      <path d="M3 9h18M8 14h2m4 0h2" />
+                    </svg>
+                    <span className="sidebar-utility-label">
+                      Server address
+                    </span>
+                  </button>
+                )}
+                <button
+                  className="sidebar-utility-button"
+                  aria-label="Notifications"
+                  title={sidebarCollapsed ? 'Notifications' : undefined}
+                  disabled={editing || busy || booting}
+                  onClick={() => setNotificationSettingsOpen(true)}
+                >
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
+                  </svg>
+                  <span className="sidebar-utility-label">Notifications</span>
+                </button>
+                <button
+                  className="sidebar-utility-button"
+                  aria-label="Updates"
+                  title={sidebarCollapsed ? 'Updates' : undefined}
+                  disabled={editing || busy || booting}
+                  onClick={() => setUpdatesOpen(true)}
+                >
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-2l2 2M18 17a7 7 0 0 1-12 2l-2-2" />
+                  </svg>
+                  <span className="sidebar-utility-label">Updates</span>
+                </button>
+              </nav>
+            )}
             <div className="source-label">
               <span className="source-mode-label">Mode:</span>
               {config?.mock
@@ -1443,7 +1541,28 @@ export default function App() {
             </div>
             {config?.mock && <p>Simulated values for exploration.</p>}
             <div className="sidebar-foot">
-              © MME89 2026 <span>v1.1.1</span>
+              <span className="sidebar-copyright">© MME89 2026</span>
+              <div className="sidebar-footer-links">
+                {config?.version && (
+                  <span className="sidebar-version">v{config.version}</span>
+                )}
+                <a
+                  className="sidebar-github-link"
+                  href="https://github.com/mme89/PhasePanel"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="GitHub repository"
+                  title="GitHub repository"
+                >
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                  >
+                    <path d="M12 .75a11.25 11.25 0 0 0-3.56 21.92c.56.1.77-.24.77-.54v-2.1c-3.13.68-3.79-1.33-3.79-1.33-.51-1.3-1.25-1.65-1.25-1.65-1.02-.7.08-.69.08-.69 1.13.08 1.73 1.16 1.73 1.16 1 1.72 2.63 1.22 3.27.93.1-.73.39-1.22.71-1.5-2.5-.28-5.13-1.25-5.13-5.57 0-1.23.44-2.23 1.16-3.01-.12-.28-.5-1.43.11-2.98 0 0 .95-.3 3.09 1.15a10.78 10.78 0 0 1 5.62 0c2.14-1.45 3.08-1.15 3.08-1.15.62 1.55.23 2.7.12 2.98.72.78 1.16 1.78 1.16 3.01 0 4.33-2.63 5.29-5.14 5.57.4.35.76 1.03.76 2.08v3.1c0 .3.21.65.78.54A11.25 11.25 0 0 0 12 .75Z" />
+                  </svg>
+                </a>
+              </div>
             </div>
           </div>
         </aside>
@@ -2889,6 +3008,12 @@ export default function App() {
             </form>
           </section>
         </Modal>
+      )}
+      {updatesOpen && (
+        <UpdatesDialog
+          currentVersion={config?.version}
+          onClose={() => setUpdatesOpen(false)}
+        />
       )}
       {sourceSettingsOpen && (
         <SourceSettingsDialog

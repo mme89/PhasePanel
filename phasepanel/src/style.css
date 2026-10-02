@@ -254,6 +254,17 @@ small {
   border-top: 1px solid #344c3e;
   padding: 18px 0 24px;
 }
+.sidebar-bottom.settings-navigation {
+  flex: 1;
+  margin-top: 28px;
+}
+.settings-navigation > .sidebar-settings {
+  border-top: 0;
+  padding-top: 0;
+}
+.sidebar-settings-back {
+  margin-bottom: 24px;
+}
 .sidebar-section-heading {
   color: #96ad9c;
   font-size: 9px;
@@ -323,6 +334,38 @@ small {
   display: flex;
   justify-content: space-between;
   margin-top: 24px;
+  align-items: center;
+  gap: 8px;
+}
+.sidebar-footer-links {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sidebar-github-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  color: #aac1b0;
+  border-radius: 4px;
+}
+.sidebar-github-link svg {
+  width: 18px;
+  height: 18px;
+}
+.sidebar-github-link:hover {
+  background: #264132;
+  color: #e6f7ce;
+}
+.sidebar-github-link:focus-visible {
+  outline: 2px solid #c2e59c;
+  outline-offset: 2px;
+}
+.sidebar.collapsed .sidebar-foot {
+  justify-content: center;
 }
 .main-shell {
   margin-left: 254px;
@@ -348,7 +391,8 @@ small {
 .sidebar.collapsed .sidebar-utility-label,
 .sidebar.collapsed .source-label,
 .sidebar.collapsed .sidebar-bottom p,
-.sidebar.collapsed .sidebar-foot {
+.sidebar.collapsed .sidebar-copyright,
+.sidebar.collapsed .sidebar-version {
   display: none;
 }
 .sidebar.collapsed nav {
