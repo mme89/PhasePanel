@@ -20,6 +20,7 @@ export function TextTileEditor({
   onSave: (tile: TextTile) => void;
   onClose: () => void;
 }) {
+  const [id] = useState(() => initial?.id ?? newId());
   const [label, setLabel] = useState(initial?.label ?? '');
   const [text, setText] = useState(initial?.text ?? '');
   const [fontSize, setFontSize] = useState(String(initial?.fontSize ?? 24));
@@ -29,7 +30,7 @@ export function TextTileEditor({
   );
   const candidate = {
     ...initial,
-    id: initial?.id ?? newId(),
+    id,
     kind: 'text',
     label,
     text,
@@ -131,12 +132,16 @@ export function TextTileView({
   content,
   editing,
   onEdit,
+  onDuplicate,
+  canDuplicate = true,
   onRemove,
 }: {
   widget: TextTile | DateTimeTile;
   content?: ReactNode;
   editing: boolean;
   onEdit: () => void;
+  onDuplicate?: () => void;
+  canDuplicate?: boolean;
   onRemove: () => void;
 }) {
   const displayName =
@@ -150,7 +155,10 @@ export function TextTileView({
       style={{ backgroundColor: widget.backgroundColor }}
     >
       {widget.label && (
-        <h2 className={editing ? 'drag-handle' : undefined}>{widget.label}</h2>
+        <h2 className={editing ? 'drag-handle' : undefined}>
+          {editing && <span aria-hidden="true">⠿ </span>}
+          {widget.label}
+        </h2>
       )}
       <div
         className={`text-tile-body ${editing && !widget.label ? 'drag-handle' : ''}`}
@@ -166,6 +174,15 @@ export function TextTileView({
           <button aria-label={`Edit ${displayName}`} onClick={onEdit}>
             Configure
           </button>
+          {onDuplicate && (
+            <button
+              aria-label={`Duplicate ${displayName}`}
+              disabled={!canDuplicate}
+              onClick={onDuplicate}
+            >
+              Duplicate
+            </button>
+          )}
           <button aria-label={`Remove ${displayName}`} onClick={onRemove}>
             Remove
           </button>

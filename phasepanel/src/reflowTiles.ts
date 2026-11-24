@@ -17,6 +17,7 @@ export function reflowTiles(
   active: LayoutItem,
   swap: boolean,
   width = Infinity,
+  maxY = 920000,
 ): Layout {
   const previous = original.find((item) => item.i === active.i);
   if (!previous) return original;
@@ -43,7 +44,7 @@ export function reflowTiles(
           (item) =>
             item.x >= 0 &&
             item.x + item.w <= width + 1e-6 &&
-            item.y <= 920000 &&
+            item.y + item.h <= maxY + 1e-6 &&
             !exchanged.some((other) => overlaps(item, other)),
         )
       )
@@ -59,7 +60,7 @@ export function reflowTiles(
     while (collisions.length) {
       if (next.static) return original;
       next.y = Math.max(...collisions.map((other) => other.y + other.h));
-      if (next.y > 920000) return original;
+      if (next.y + next.h > maxY + 1e-6) return original;
       collisions = placed.filter((other) => overlaps(next, other));
     }
     placed.push(next);

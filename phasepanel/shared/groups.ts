@@ -21,6 +21,28 @@ export function nextPosition(
     ? { x, y }
     : { x: 0, y: Math.max(...members.map((w) => w.y + w.h)) };
 }
+function pruneTileLinks(
+  links: string[][] | undefined,
+  widgets: Widget[],
+): string[][] | undefined {
+  if (!links?.length) return undefined;
+  const sections = new Map(widgets.map((w) => [w.id, w.groupId]));
+  const seen = new Set<string>();
+  const kept: string[][] = [];
+  for (const link of links) {
+    const members = link.filter(
+      (id, index) =>
+        sections.has(id) && !seen.has(id) && link.indexOf(id) === index,
+    );
+    const sameSection = members.filter(
+      (id) => sections.get(id) === sections.get(members[0]),
+    );
+    if (sameSection.length < 2) continue;
+    sameSection.forEach((id) => seen.add(id));
+    kept.push(sameSection);
+  }
+  return kept.length ? kept : undefined;
+}
 export function saveWidget(dashboard: Dashboard, widget: Widget): Dashboard {
   const previous = dashboard.widgets.find((w) => w.id === widget.id);
   const placed =
@@ -34,11 +56,13 @@ export function saveWidget(dashboard: Dashboard, widget: Widget): Dashboard {
           ),
         }
       : widget;
+  const widgets = previous
+    ? dashboard.widgets.map((w) => (w.id === placed.id ? placed : w))
+    : [...dashboard.widgets, placed];
   return {
     ...dashboard,
-    widgets: previous
-      ? dashboard.widgets.map((w) => (w.id === placed.id ? placed : w))
-      : [...dashboard.widgets, placed],
+    widgets,
+    tileLinks: pruneTileLinks(dashboard.tileLinks, widgets),
   };
 }
 export function saveGroup(
@@ -67,12 +91,14 @@ export function saveGroup(
     moved.set(widget.id, next);
   }
   const groups = dashboard.groups ?? [];
+  const widgets = dashboard.widgets.map((w) => moved.get(w.id) ?? w);
   return {
     ...dashboard,
     groups: groups.some((g) => g.id === group.id)
       ? groups.map((g) => (g.id === group.id ? group : g))
       : [...groups, group],
-    widgets: dashboard.widgets.map((w) => moved.get(w.id) ?? w),
+    widgets,
+    tileLinks: pruneTileLinks(dashboard.tileLinks, widgets),
   };
 }
 export function removeGroup(

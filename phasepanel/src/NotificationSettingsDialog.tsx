@@ -308,7 +308,15 @@ export function NotificationSettingsDialog({
           </div>
         )}
         {!settings ? (
-          <p>Loading settings…</p>
+          error ? (
+            <footer className="modal-actions">
+              <button type="button" onClick={onClose}>
+                Close
+              </button>
+            </footer>
+          ) : (
+            <p>Loading settings…</p>
+          )
         ) : (
           <form
             onSubmit={(event) => {
@@ -551,6 +559,7 @@ export function NotificationSettingsDialog({
                         type="number"
                         min="1"
                         max="65535"
+                        disabled={!settings.email.enabled}
                         value={settings.email.port}
                         onChange={(event) =>
                           updateEmail({ port: Number(event.target.value) })
@@ -602,6 +611,7 @@ export function NotificationSettingsDialog({
                       Sender email
                       <input
                         type="email"
+                        disabled={!settings.email.enabled}
                         value={settings.email.from}
                         onChange={(event) =>
                           updateEmail({ from: event.target.value })

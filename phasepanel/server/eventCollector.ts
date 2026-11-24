@@ -7,6 +7,7 @@ import { defaultCollectorSettings } from './collectorSettings.js';
 export class EventCollector {
   private timer?: ReturnType<typeof setTimeout>;
   private pending?: Promise<void>;
+  private controller?: AbortController;
   private stopped = false;
   private intervalMs = defaultCollectorSettings.eventIntervalMinutes * 60_000;
 
@@ -16,6 +17,7 @@ export class EventCollector {
     private fetchEvents: (
       device: ModbusDevice,
       timeoutMs: number,
+      signal?: AbortSignal,
     ) => Promise<DeviceEvent[]> = fetchDeviceEvents,
     private now: () => number = Date.now,
     private onError: () => void = () => {},
@@ -64,41 +66,65 @@ export class EventCollector {
   private async collect() {
     const { revision, settings } = this.source();
     if (settings.source !== 'modbus') return;
+    const controller = new AbortController();
+    this.controller = controller;
     const devices = settings.modbus.devices;
-    for (let index = 0; index < devices.length; index += 4) {
-      if (this.stopped || this.source().revision !== revision) return;
-      await Promise.all(
-        devices.slice(index, index + 4).map(async (device) => {
-          let events: DeviceEvent[] = [];
-          let error: string | null = null;
-          try {
-            events = await this.fetchEvents(device, settings.modbus.timeoutMs);
-          } catch (failure) {
-            error =
-              failure instanceof Error
-                ? failure.message
-                : 'Event fetch failed.';
-          }
-          if (this.stopped || this.source().revision !== revision) return;
-          const attemptedAt = this.now();
-          if (!error) this.store.recordDeviceEvents(events);
-          this.store.recordDeviceEventFetchStatus({
-            project: device.project,
-            deviceId: device.id,
-            deviceName: device.name,
-            host: device.host,
-            lastAttemptMs: attemptedAt,
-            lastSuccessMs: error ? null : attemptedAt,
-            error,
-          });
-        }),
-      );
+    try {
+      for (let index = 0; index < devices.length; index += 4) {
+        if (this.stopped || this.source().revision !== revision) return;
+        await Promise.all(
+          devices.slice(index, index + 4).map(async (device) => {
+            let events: DeviceEvent[] = [];
+            let error: string | null = null;
+            try {
+              events = await this.fetchEvents(
+                device,
+                settings.modbus.timeoutMs,
+                controller.signal,
+              );
+            } catch (failure) {
+              error =
+                failure instanceof Error
+                  ? failure.message
+                  : 'Event fetch failed.';
+            }
+            if (this.stopped || this.source().revision !== revision) return;
+            const attemptedAt = this.now();
+            if (!error) {
+              try {
+                this.store.recordDeviceEvents(events);
+              } catch (failure) {
+                error =
+                  failure instanceof Error
+                    ? failure.message
+                    : 'Failed to store device events.';
+              }
+            }
+            try {
+              this.store.recordDeviceEventFetchStatus({
+                project: device.project,
+                deviceId: device.id,
+                deviceName: device.name,
+                host: device.host,
+                lastAttemptMs: attemptedAt,
+                lastSuccessMs: error ? null : attemptedAt,
+                error,
+              });
+            } catch {
+              this.onError();
+            }
+          }),
+        );
+      }
+    } finally {
+      if (this.controller === controller) this.controller = undefined;
     }
   }
 
   async stop() {
     this.stopped = true;
     clearTimeout(this.timer);
+    this.controller?.abort();
     await this.pending?.catch(() => {});
   }
 }

@@ -140,12 +140,16 @@ export function LogTileView({
   events,
   editing,
   onEdit,
+  onDuplicate,
+  canDuplicate = true,
   onRemove,
 }: {
   widget: LogTile;
   events: LogEntry[];
   editing: boolean;
   onEdit: () => void;
+  onDuplicate?: () => void;
+  canDuplicate?: boolean;
   onRemove: () => void;
 }) {
   return (
@@ -160,6 +164,7 @@ export function LogTileView({
           flexShrink: 0,
         }}
       >
+        {editing && <span aria-hidden="true">⠿ </span>}
         {widget.label}
       </h2>
       <div
@@ -192,6 +197,15 @@ export function LogTileView({
           <button aria-label={`Edit ${widget.label}`} onClick={onEdit}>
             Configure
           </button>
+          {onDuplicate && (
+            <button
+              aria-label={`Duplicate ${widget.label}`}
+              disabled={!canDuplicate}
+              onClick={onDuplicate}
+            >
+              Duplicate
+            </button>
+          )}
           <button aria-label={`Remove ${widget.label}`} onClick={onRemove}>
             Remove
           </button>

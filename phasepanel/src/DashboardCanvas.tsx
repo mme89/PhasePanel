@@ -28,7 +28,34 @@ export function DashboardCanvas({
   useEffect(() => {
     setZoom('fit');
     viewport.current?.scrollTo(0, 0);
-  }, [editing, resolution?.width, resolution?.height]);
+  }, [editing]);
+  useEffect(() => {
+    const node = viewport.current;
+    if (!editing || !node) return;
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      setZoom((current) => {
+        const activeScale =
+          typeof current === 'number'
+            ? current
+            : Number(
+                node
+                  .querySelector<HTMLElement>('[data-scale]')
+                  ?.getAttribute('data-scale') ?? 1,
+              );
+        const pct = Math.round(activeScale * 100);
+        const steps = [10, 25, 50, 75, 100, 125, 150, 200];
+        const next =
+          event.deltaY < 0
+            ? (steps.find((value) => value > pct) ?? 200)
+            : ([...steps].reverse().find((value) => value < pct) ?? 10);
+        return next / 100;
+      });
+    };
+    node.addEventListener('wheel', onWheel, { passive: false });
+    return () => node.removeEventListener('wheel', onWheel);
+  }, [editing]);
   const frame = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const [availableHeight, setAvailableHeight] = useState(window.innerHeight);

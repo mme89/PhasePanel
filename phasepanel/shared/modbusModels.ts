@@ -2,6 +2,17 @@ import { z } from 'zod';
 
 export const defaultModbusModel = 'umg-604-pro';
 
+export const builtInModbusModelIds = [
+  defaultModbusModel,
+  'umg-605-pro',
+  'umg-509-pro',
+  'umg-512-pro',
+  'umg-96-pa',
+  'umg-96-pq-l',
+  'umg-96rm-e',
+  'umg-508',
+] as const;
+
 export const modbusModelSchema = z
   .object({
     id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),

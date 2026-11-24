@@ -54,22 +54,30 @@ export function ModbusModelsDialog({
       className="modbus-models-shell"
       onClose={onClose}
     >
-      <section className="modal modbus-models-modal">
-        <span className="eyebrow">DIRECT MODBUS/TCP</span>
-        <h2 id="modbus-models-title">Device models and mappings</h2>
-        {error && (
-          <div className="notice error" role="alert">
-            {error}
-          </div>
-        )}
-        <ModbusModelsEditor
-          models={draft}
-          usedModelIds={usedModelIds}
-          onChange={(models) => {
-            setDraft(models);
-            setError('');
-          }}
-        />
+      <section className="modal content-editor-modal modbus-models-modal">
+        <header className="modal-heading">
+          <span className="eyebrow">DIRECT MODBUS/TCP</span>
+          <h2 id="modbus-models-title">Device models and mappings</h2>
+          <p className="modbus-models-subtitle">
+            Define register blocks and measurement mappings for built-in and
+            custom Modbus/TCP device models.
+          </p>
+        </header>
+        <div className="editor-content modbus-models-body">
+          {error && (
+            <div className="notice error" role="alert">
+              {error}
+            </div>
+          )}
+          <ModbusModelsEditor
+            models={draft}
+            usedModelIds={usedModelIds}
+            onChange={(models) => {
+              setDraft(models);
+              setError('');
+            }}
+          />
+        </div>
         <footer className="modal-actions">
           <button type="button" onClick={onClose}>
             Cancel

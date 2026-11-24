@@ -93,7 +93,9 @@ export function TilePositionEditor({
       section && dashboard.groupLayoutWidth
         ? Math.min(gridWidth * scale, width - origin.x - 20 * scale)
         : gridWidth * scale,
-    maxY: origin.y + 10000 * pitchY,
+    maxY: dashboard.resolution
+      ? Math.max(origin.y, dashboard.resolution.height)
+      : origin.y + 10000 * pitchY,
   };
   function withPositions(
     next: typeof tiles,
@@ -223,7 +225,12 @@ export function TilePositionEditor({
                   setError('');
                 }}
               />
-              {tile.label}{' '}
+              {tile.label ||
+                ('kind' in tile && tile.kind === 'text'
+                  ? 'Text tile'
+                  : 'kind' in tile && tile.kind === 'datetime'
+                    ? 'Date & time'
+                    : 'Untitled tile')}{' '}
               {links.some((link) => link.includes(tile.id)) && (
                 <span className="muted">(linked)</span>
               )}{' '}

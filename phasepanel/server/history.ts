@@ -38,8 +38,17 @@ export class HistorySampler {
   private latestRevision?: number;
   private latestReadings = new Map<string, Reading>();
   private lastSampledAt?: number;
+  private lastPrunedAt = Number.NEGATIVE_INFINITY;
   private alarmStates = new Map<string, DashboardAlarmSnapshot>();
   private retentionMs = HISTORY_RETENTION_MS;
+
+  private pruneIfDue(sampledAt: number) {
+    if (sampledAt - this.lastPrunedAt < 60_000) return;
+    this.lastPrunedAt = sampledAt;
+    this.store.pruneReadings(sampledAt - this.retentionMs);
+    this.store.pruneNotifications(sampledAt - 30 * 86_400_000);
+    this.store.pruneDeviceEvents(50_000);
+  }
 
   constructor(
     private store: Store,
@@ -209,7 +218,8 @@ export class HistorySampler {
         sampledAt,
         this.staleMs(),
       );
-      this.store.pruneReadings(sampledAt - this.retentionMs);
+      this.pruneIfDue(sampledAt);
+      this.latestReadings.clear();
       this.latestRevision = revision;
       this.lastSampledAt = sampledAt;
       return;
@@ -263,7 +273,7 @@ export class HistorySampler {
       this.staleMs(),
     );
     this.updateAlarmStates(dashboards, readings, sampledAt, revision);
-    this.store.pruneReadings(sampledAt - this.retentionMs);
+    this.pruneIfDue(sampledAt);
     const byKey = new Map(readings.map((reading) => [reading.key, reading]));
     this.latestRevision = revision;
     this.latestReadings = new Map(

@@ -18,10 +18,7 @@ export function useAlarmStatuses(shouldPoll: boolean) {
     async function poll() {
       try {
         const result = await api<AlarmStatuses>('/dashboards/alarm-status', {
-          signal: AbortSignal.any([
-            controller.signal,
-            AbortSignal.timeout(65000),
-          ]),
+          signal: controller.signal,
         });
         if (!controller.signal.aborted) setStatuses(result);
       } catch {

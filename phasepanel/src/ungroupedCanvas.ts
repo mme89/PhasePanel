@@ -85,8 +85,9 @@ export function saveCanvasWidget(
   )
     return saved;
   const origin = root?.querySelector<HTMLElement>('.group-arrangement-grid');
-  if (!origin) return saved;
+  if (!origin || !origin.offsetWidth) return saved;
   const box = origin.getBoundingClientRect();
+  if (!box.width) return saved;
   const scale = box.width / origin.offsetWidth;
   const bottom = Math.max(
     0,

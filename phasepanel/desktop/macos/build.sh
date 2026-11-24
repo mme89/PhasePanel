@@ -7,7 +7,7 @@ app_dir="$output_dir/PhasePanel.app"
 resources_dir="$app_dir/Contents/Resources"
 staging_dir="$(mktemp -d)"
 trap 'rm -rf "$staging_dir"' EXIT
-node_version="${NODE_VERSION:-24.21.0}"
+node_version="${NODE_VERSION:-24.22.3}"
 architecture="$(uname -m)"
 case "$architecture" in
   arm64) node_architecture=arm64 ;;

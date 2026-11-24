@@ -37,8 +37,20 @@ PhasePanel is a local dashboard for live [Janitza](https://www.janitza.com/) mea
 
 You need a reachable GridVis REST service or Janitza devices accessible over Modbus/TCP, plus a modern browser. The desktop downloads include Node.js. Running from source requires Node.js 24 or newer and npm.
 
-> [!NOTE]
-> The bundled device model library currently includes only the UMG 604-PRO for direct Modbus/TCP connections. To use another model, add its register mapping under **Source settings → Manage device models**.
+### Supported direct Modbus/TCP devices
+
+PhasePanel includes built-in register mappings and documented electrical value catalogs for the following native Ethernet Janitza devices:
+
+- **UMG 604-PRO**
+- **UMG 605-PRO**
+- **UMG 509-PRO**
+- **UMG 512-PRO**
+- **UMG 96-PA**
+- **UMG 96-PQ-L**
+- **UMG 96RM-E**
+- **UMG 508**
+
+To use another Modbus/TCP device or customize register mappings, open **Source settings → Manage device models**. Connections through the **GridVis REST API** support any device exposed by your GridVis server.
 
 ## Installation
 

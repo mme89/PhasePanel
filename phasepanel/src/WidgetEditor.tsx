@@ -127,7 +127,10 @@ export function WidgetEditor({
     return () => controller.abort();
   }, [project, retry]);
   useEffect(() => {
-    if (!project || !device) return;
+    if (!project || !device) {
+      setPending(false);
+      return;
+    }
     const controller = new AbortController();
     setMeasurements([]);
     setPending(true);
@@ -208,7 +211,11 @@ export function WidgetEditor({
               ...(groupId ? { groupId } : {}),
               label:
                 label.trim() || `${selected.label} · ${selected.channelLabel}`,
-              deviceName: devices.find((d) => d.id === device)?.name ?? device,
+              deviceName:
+                devices.find((d) => d.id === device)?.name ??
+                (device === initial?.binding.deviceId
+                  ? initial.deviceName
+                  : device),
               unit: selected.unit,
               measurementLabel: selected.label,
               decimals,

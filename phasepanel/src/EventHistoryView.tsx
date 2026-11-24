@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   DeviceEvent,
   DeviceEventFetchStatus,
@@ -41,8 +41,16 @@ export function EventHistoryView({
   const [loading, setLoading] = useState(true);
   const [fetching, setFetching] = useState(false);
   const [error, setError] = useState('');
+  const deviceRef = useRef(device);
+  deviceRef.current = device;
+  const loadController = useRef<AbortController | null>(null);
+  const loadSequence = useRef(0);
 
-  async function load(offset = 0, selectedDevice = device) {
+  async function load(offset = 0, selectedDevice = deviceRef.current) {
+    loadController.current?.abort();
+    const controller = new AbortController();
+    loadController.current = controller;
+    const sequence = ++loadSequence.current;
     setLoading(true);
     setError('');
     try {
@@ -51,7 +59,11 @@ export function EventHistoryView({
         limit: String(PAGE_SIZE),
       });
       if (selectedDevice) query.set('deviceKey', selectedDevice);
-      const response = await api<EventResponse>(`/events?${query}`);
+      const response = await api<EventResponse>(`/events?${query}`, {
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted || sequence !== loadSequence.current)
+        return;
       setDevices(response.devices);
       setStatuses(response.fetchStatuses);
       setEvents((current) =>
@@ -59,14 +71,18 @@ export function EventHistoryView({
       );
       setHasMore(response.hasMore);
     } catch (failure) {
-      setError(message(failure));
+      if (!controller.signal.aborted && sequence === loadSequence.current)
+        setError(message(failure));
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current) setLoading(false);
     }
   }
 
   useEffect(() => {
     if (source === 'modbus') void load(0, device);
+    return () => {
+      loadController.current?.abort();
+    };
   }, [device, source]);
 
   async function fetchNow() {
@@ -74,7 +90,7 @@ export function EventHistoryView({
     setError('');
     try {
       await api('/events/collect', { method: 'POST' });
-      await load(0);
+      await load(0, deviceRef.current);
     } catch (failure) {
       setError(message(failure));
     } finally {

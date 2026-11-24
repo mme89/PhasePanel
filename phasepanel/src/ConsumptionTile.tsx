@@ -43,26 +43,43 @@ export function periodStart(period: ConsumptionTile['period'], now: number) {
 
 export function periodBuckets(period: ConsumptionTile['period'], now: number) {
   const starts: number[] = [];
+  if (period === 'day') {
+    for (
+      let time = periodStart(period, now);
+      time <= now && starts.length < 32;
+      time += 3_600_000
+    )
+      starts.push(time);
+    return starts;
+  }
   const date = new Date(periodStart(period, now));
   while (date.getTime() <= now && starts.length < 32) {
     starts.push(date.getTime());
-    if (period === 'day') date.setHours(date.getHours() + 1);
-    else date.setDate(date.getDate() + 1);
+    date.setDate(date.getDate() + 1);
   }
   return starts;
 }
 
 function chartBuckets(period: ConsumptionTile['period'], now: number) {
   const starts: number[] = [];
-  const date = new Date(periodStart(period, now));
-  const end = new Date(date);
-  if (period === 'day') end.setDate(end.getDate() + 1);
-  else if (period === 'week') end.setDate(end.getDate() + 7);
+  const startMs = periodStart(period, now);
+  const end = new Date(startMs);
+  if (period === 'day') {
+    end.setDate(end.getDate() + 1);
+    for (
+      let time = startMs;
+      time < end.getTime() && starts.length < 32;
+      time += 3_600_000
+    )
+      starts.push(time);
+    return starts;
+  }
+  const date = new Date(startMs);
+  if (period === 'week') end.setDate(end.getDate() + 7);
   else end.setMonth(end.getMonth() + 1);
   while (date < end) {
     starts.push(date.getTime());
-    if (period === 'day') date.setHours(date.getHours() + 1);
-    else date.setDate(date.getDate() + 1);
+    date.setDate(date.getDate() + 1);
   }
   return starts;
 }
@@ -514,6 +531,8 @@ export function ConsumptionTileView({
   now,
   editing,
   onEdit,
+  onDuplicate,
+  canDuplicate = true,
   onRemove,
 }: {
   widget: ConsumptionTile;
@@ -524,6 +543,8 @@ export function ConsumptionTileView({
   now: number;
   editing: boolean;
   onEdit: () => void;
+  onDuplicate?: () => void;
+  canDuplicate?: boolean;
   onRemove: () => void;
 }) {
   const [result, setResult] = useState<Result>();
@@ -592,7 +613,9 @@ export function ConsumptionTileView({
         ? 'Waiting for readings from every meter.'
         : [
             result?.partial &&
-              `Partial period: readings begin ${new Date(result.baselineTime!).toLocaleString()}.`,
+              (result.baselineTime !== null
+                ? `Partial period: readings begin ${new Date(result.baselineTime).toLocaleString()}.`
+                : 'Partial period.'),
             result?.stale && 'Latest reading is old.',
           ]
             .filter(Boolean)
@@ -694,6 +717,15 @@ export function ConsumptionTileView({
           <button aria-label={`Edit ${widget.label}`} onClick={onEdit}>
             Configure
           </button>
+          {onDuplicate && (
+            <button
+              aria-label={`Duplicate ${widget.label}`}
+              disabled={!canDuplicate}
+              onClick={onDuplicate}
+            >
+              Duplicate
+            </button>
+          )}
           <button aria-label={`Remove ${widget.label}`} onClick={onRemove}>
             Remove
           </button>

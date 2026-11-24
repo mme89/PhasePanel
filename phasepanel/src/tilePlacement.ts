@@ -167,7 +167,7 @@ export function placementError(
       tile.x < bounds.x - 1e-6 ||
       tile.x + tile.w > bounds.x + bounds.width + 1e-6 ||
       tile.y < bounds.y - 1e-6 ||
-      tile.y > bounds.maxY + 1e-6
+      tile.y + tile.h > bounds.maxY + 1e-6
     )
       return 'The position is outside this tile section. Keep tiles within its horizontal bounds and below its top edge.';
     if (

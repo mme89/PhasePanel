@@ -23,7 +23,8 @@ import {
   type TextTile as TextTileModel,
 } from '../shared/model';
 import { TextTileEditor, TextTileView } from './TextTile';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { newId } from '../shared/id.js';
 import {
   exportDashboards,
   importDashboards,
@@ -34,7 +35,13 @@ import { DashboardCanvas } from './DashboardCanvas';
 import { useContainerWidth, type Layout } from 'react-grid-layout';
 import { CanvasTileGrid } from './CanvasTileGrid';
 import { TilePositionEditor } from './TilePositionEditor';
-import { snapLinkedWidgets, validTileLinks } from './tileLinks';
+import {
+  linkTiles,
+  snapLinkedWidgets,
+  unlinkTiles,
+  validTileLinks,
+} from './tileLinks';
+import { alignTiles, type Alignment } from './tilePlacement';
 import {
   bindingKey,
   dashboardInput,
@@ -159,6 +166,8 @@ function Tile({
   staleMs,
   now,
   onEdit,
+  onDuplicate,
+  canDuplicate = true,
   onRemove,
 }: {
   widget: Widget | TotalTile;
@@ -171,6 +180,8 @@ function Tile({
   staleMs: number;
   now: number;
   onEdit: () => void;
+  onDuplicate?: () => void;
+  canDuplicate?: boolean;
   onRemove: () => void;
 }) {
   const widget = isMeasurementTile(original)
@@ -408,6 +419,15 @@ function Tile({
           <button aria-label={`Edit ${widget.label}`} onClick={onEdit}>
             Configure
           </button>
+          {onDuplicate && (
+            <button
+              aria-label={`Duplicate ${widget.label}`}
+              disabled={!canDuplicate}
+              onClick={onDuplicate}
+            >
+              Duplicate
+            </button>
+          )}
           <button aria-label={`Remove ${widget.label}`} onClick={onRemove}>
             Remove
           </button>
@@ -468,7 +488,167 @@ export default function App() {
     else url.searchParams.delete('rotate');
     return url.pathname + url.search;
   }
-  const [draft, setDraft] = useState<Dashboard>();
+  const [draftHistory, setDraftHistory] = useState<{
+    past: Dashboard[];
+    present?: Dashboard;
+    future: Dashboard[];
+  }>({ past: [], future: [] });
+  const draft = draftHistory.present;
+  const setDraft = useCallback(
+    (
+      update:
+        | Dashboard
+        | undefined
+        | ((current: Dashboard | undefined) => Dashboard | undefined),
+    ) => {
+      setDraftHistory((history) => {
+        const next =
+          typeof update === 'function' ? update(history.present) : update;
+        if (next === history.present) return history;
+        if (!history.present || !next || history.present.id !== next.id) {
+          return { past: [], present: next, future: [] };
+        }
+        return {
+          past: [...history.past.slice(-49), history.present],
+          present: next,
+          future: [],
+        };
+      });
+    },
+    [],
+  );
+  const canUndo = draftHistory.past.length > 0;
+  const canRedo = draftHistory.future.length > 0;
+  const [selectedTileIds, setSelectedTileIds] = useState<string[]>([]);
+  function undoDraft() {
+    setDraftHistory((history) => {
+      if (!history.past.length || !history.present) return history;
+      const previous = history.past[history.past.length - 1];
+      return {
+        past: history.past.slice(0, -1),
+        present: previous,
+        future: [history.present, ...history.future].slice(0, 50),
+      };
+    });
+    setPlacementRevision((n) => n + 1);
+  }
+  function redoDraft() {
+    setDraftHistory((history) => {
+      if (!history.future.length || !history.present) return history;
+      const [next, ...rest] = history.future;
+      return {
+        past: [...history.past.slice(-49), history.present],
+        present: next,
+        future: rest,
+      };
+    });
+    setPlacementRevision((n) => n + 1);
+  }
+  function duplicateTiles(ids: string[]) {
+    setDraft((d) => {
+      if (!d) return d;
+      let next = d;
+      for (const id of ids) {
+        if (next.widgets.length >= 100) break;
+        const original = next.widgets.find((w) => w.id === id);
+        if (!original) continue;
+        const clone = { ...structuredClone(original), id: newId() };
+        next = saveCanvasWidget(next, clone, containerRef.current);
+      }
+      return next;
+    });
+    setPlacementRevision((n) => n + 1);
+  }
+  function removeTiles(ids: string[]) {
+    const target = new Set(ids);
+    setDraft((d) => {
+      if (!d) return d;
+      const widgets = d.widgets.filter((w) => !target.has(w.id));
+      const tileLinks = validTileLinks(d.tileLinks, widgets);
+      return {
+        ...d,
+        widgets,
+        tileLinks: tileLinks.length ? tileLinks : undefined,
+      };
+    });
+    setSelectedTileIds((current) => current.filter((id) => !target.has(id)));
+  }
+  function alignSelectedTiles(alignment: Alignment) {
+    setDraft((d) => {
+      if (!d) return d;
+      const selected = d.widgets.filter((w) => selectedTileIds.includes(w.id));
+      if (selected.length < 2) return d;
+      const groupId = selected[0].groupId;
+      if (!selected.every((w) => w.groupId === groupId)) return d;
+      const sectionWidgets = d.widgets.filter((w) => w.groupId === groupId);
+      const aligned = alignTiles(
+        sectionWidgets.map((w) => ({
+          id: w.id,
+          x: w.x,
+          y: w.y,
+          w: w.w,
+          h: w.h,
+        })),
+        new Set(selectedTileIds),
+        alignment,
+      );
+      const byId = new Map(aligned.map((item) => [item.id, item]));
+      return {
+        ...d,
+        widgets: d.widgets.map((w) => {
+          const moved = byId.get(w.id);
+          return moved
+            ? {
+                ...w,
+                x: Math.max(0, Math.min(12 - w.w, moved.x)),
+                y: Math.max(0, Math.min(10000, moved.y)),
+              }
+            : w;
+        }),
+      };
+    });
+    setPlacementRevision((n) => n + 1);
+  }
+  function matchSelectedTileSizes() {
+    setDraft((d) => {
+      if (!d) return d;
+      const first = d.widgets.find((w) => w.id === selectedTileIds[0]);
+      if (!first) return d;
+      const selected = new Set(selectedTileIds);
+      return {
+        ...d,
+        widgets: d.widgets.map((w) =>
+          selected.has(w.id)
+            ? {
+                ...w,
+                w: first.w,
+                h: first.h,
+                x: Math.min(w.x, Math.max(0, 12 - first.w)),
+              }
+            : w,
+        ),
+      };
+    });
+    setPlacementRevision((n) => n + 1);
+  }
+  function moveSelectedTilesToGroup(targetGroupId: string) {
+    setDraft((d) => {
+      if (!d) return d;
+      const groupId = targetGroupId || undefined;
+      let next = d;
+      for (const id of selectedTileIds) {
+        const widget = next.widgets.find((w) => w.id === id);
+        if (!widget || widget.groupId === groupId) continue;
+        next = saveCanvasWidget(
+          next,
+          { ...widget, groupId },
+          containerRef.current,
+        );
+      }
+      return next;
+    });
+    setPlacementRevision((n) => n + 1);
+  }
   const [config, setConfig] = useState<{
     mock: boolean;
     source: 'mock' | 'gridvis' | 'modbus';
@@ -480,7 +660,10 @@ export default function App() {
     serverSettingsVisible?: boolean;
   }>();
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [busyCount, setBusyCount] = useState(0);
+  const busy = busyCount > 0;
+  const loadController = useRef<AbortController | null>(null);
+  const loadSequence = useRef(0);
   const [booting, setBooting] = useState(true);
   const [arrangingGroups, setArrangingGroups] = useState(false);
   const [positioningTiles, setPositioningTiles] = useState(false);
@@ -554,7 +737,12 @@ export default function App() {
     changed,
     loading,
     lastRefresh,
-  } = useReadings(active, config?.sourceRevision, historyVersion);
+  } = useReadings(
+    active,
+    config?.sourceRevision,
+    historyVersion,
+    draft && !displayMode ? draft : undefined,
+  );
   const resolution = dashboardResolutionSchema.safeParse(rawShown?.resolution)
     .success
     ? rawShown?.resolution
@@ -572,6 +760,14 @@ export default function App() {
         ),
       },
     [rawShown, gridWidth],
+  );
+  const readingsByKey = useMemo(
+    () => new Map(readings.map((reading) => [reading.key, reading])),
+    [readings],
+  );
+  const shownMeasurementDefaults = useMemo(
+    () => (shown ? dashboardMeasurementDefaults(shown) : []),
+    [shown],
   );
   const editing = Boolean(draft) && !displayMode;
   useEffect(() => {
@@ -616,7 +812,12 @@ export default function App() {
     );
     for (const id of acknowledgedAlarmIds.current)
       if (!activeIds.has(id)) acknowledgedAlarmIds.current.delete(id);
-    if (alarmFocusId && activeIds.has(alarmFocusId)) return;
+    if (
+      alarmFocusId &&
+      activeIds.has(alarmFocusId) &&
+      dashboards.some((dashboard) => dashboard.id === alarmFocusId)
+    )
+      return;
     const next = dashboards.find(
       (dashboard) =>
         activeIds.has(dashboard.id) &&
@@ -643,8 +844,12 @@ export default function App() {
     setArrangingGroups(false);
   }, [editing, activeId]);
   async function load(preferred?: string) {
+    loadController.current?.abort();
+    const controller = new AbortController();
+    loadController.current = controller;
+    const sequence = ++loadSequence.current;
     const [items, settings] = await Promise.all([
-      api<Dashboard[]>('/dashboards'),
+      api<Dashboard[]>('/dashboards', { signal: controller.signal }),
       api<{
         mock: boolean;
         source: 'mock' | 'gridvis' | 'modbus';
@@ -654,8 +859,9 @@ export default function App() {
         version?: string;
         storageSettingsVisible?: boolean;
         serverSettingsVisible?: boolean;
-      }>('/config'),
+      }>('/config', { signal: controller.signal }),
     ]);
+    if (controller.signal.aborted || sequence !== loadSequence.current) return;
     setDashboards(items);
     setConfig(settings);
     setActiveId((id) =>
@@ -668,11 +874,16 @@ export default function App() {
   }
   useEffect(() => {
     void load()
-      .catch((e) => setError(message(e)))
+      .catch((e) => {
+        if (!loadController.current?.signal.aborted) setError(message(e));
+      })
       .finally(() => setBooting(false));
+    return () => {
+      loadController.current?.abort();
+    };
   }, []);
   useEffect(() => {
-    if (!booting && (active || eventHistoryOpen || deviceHistoryOpen))
+    if (!booting)
       window.history.replaceState(
         null,
         '',
@@ -704,6 +915,9 @@ export default function App() {
       booting ||
       busy ||
       draft ||
+      historyOpen ||
+      eventHistoryOpen ||
+      deviceHistoryOpen ||
       !active ||
       dashboards.length < 2
     )
@@ -721,30 +935,134 @@ export default function App() {
     booting,
     busy,
     draft,
+    historyOpen,
+    eventHistoryOpen,
+    deviceHistoryOpen,
     activeId,
     dashboards,
   ]);
   useEffect(() => {
+    if (historyOpen || eventHistoryOpen || deviceHistoryOpen) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [historyOpen, eventHistoryOpen, deviceHistoryOpen]);
+  const draftPayload = draft
+    ? (() => {
+        const prunedLinks = validTileLinks(draft.tileLinks, draft.widgets);
+        return {
+          name: draft.name,
+          refreshSeconds: draft.refreshSeconds,
+          resolution: draft.resolution,
+          groupLayoutWidth: draft.groupLayoutWidth,
+          ungroupedOnCanvas: draft.ungroupedOnCanvas,
+          backgroundColor: draft.backgroundColor,
+          backgroundImage: draft.backgroundImage,
+          snapToGrid: draft.snapToGrid,
+          minimumTileSize: draft.minimumTileSize,
+          widgets: draft.widgets,
+          groups: draft.groups,
+          tileLinks: prunedLinks.length ? prunedLinks : undefined,
+          displayDefaults: draft.displayDefaults,
+          measurementDefaults: draft.measurementDefaults,
+        };
+      })()
+    : undefined;
+  const draftValidation = draftPayload
+    ? dashboardInput.safeParse(draftPayload)
+    : undefined;
+  const hasUnsavedChanges = Boolean(
+    draftPayload &&
+    active &&
+    JSON.stringify(draftPayload) !==
+      JSON.stringify(
+        (() => {
+          const prunedLinks = validTileLinks(active.tileLinks, active.widgets);
+          return {
+            name: active.name,
+            refreshSeconds: active.refreshSeconds,
+            resolution: active.resolution,
+            groupLayoutWidth: active.groupLayoutWidth,
+            ungroupedOnCanvas: active.ungroupedOnCanvas,
+            backgroundColor: active.backgroundColor,
+            backgroundImage: active.backgroundImage,
+            snapToGrid: active.snapToGrid,
+            minimumTileSize: active.minimumTileSize,
+            widgets: active.widgets,
+            groups: active.groups,
+            tileLinks: prunedLinks.length ? prunedLinks : undefined,
+            displayDefaults: active.displayDefaults,
+            measurementDefaults: active.measurementDefaults,
+          };
+        })(),
+      ),
+  );
   useEffect(() => {
-    if (!draft) return;
+    if (!editing) {
+      setSelectedTileIds([]);
+      return;
+    }
+    setSelectedTileIds((current) =>
+      current.filter((id) => draft?.widgets.some((w) => w.id === id)),
+    );
+  }, [editing, draft?.widgets]);
+  useEffect(() => {
+    if (!editing) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable ||
+          target.closest('dialog'))
+      )
+        return;
+      const mod = event.ctrlKey || event.metaKey;
+      const key = event.key.toLowerCase();
+      if (mod && key === 's') {
+        event.preventDefault();
+        if (!busy && draftValidation?.success) void save();
+      } else if (mod && key === 'z') {
+        event.preventDefault();
+        if (event.shiftKey) redoDraft();
+        else undoDraft();
+      } else if (mod && key === 'y') {
+        event.preventDefault();
+        redoDraft();
+      } else if (mod && key === 'd' && selectedTileIds.length > 0) {
+        event.preventDefault();
+        duplicateTiles(selectedTileIds);
+      } else if (
+        (event.key === 'Delete' || event.key === 'Backspace') &&
+        selectedTileIds.length > 0
+      ) {
+        event.preventDefault();
+        removeTiles(selectedTileIds);
+      } else if (event.key === 'Escape' && selectedTileIds.length > 0) {
+        setSelectedTileIds([]);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [editing, busy, draftValidation?.success, selectedTileIds, draft]);
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
     const warn = (e: BeforeUnloadEvent) => {
       e.preventDefault();
     };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [draft]);
+  }, [hasUnsavedChanges]);
   async function action(fn: () => Promise<void>) {
-    setBusy(true);
+    setBusyCount((count) => count + 1);
     setError('');
     try {
       await fn();
     } catch (e) {
       setError(message(e));
     } finally {
-      setBusy(false);
+      setBusyCount((count) => Math.max(0, count - 1));
     }
   }
   async function uploadDashboard(file: File) {
@@ -803,6 +1121,29 @@ export default function App() {
         body: JSON.stringify(body),
       });
       setDashboards((list) => list.map((d) => (d.id === saved.id ? saved : d)));
+      setDraft(undefined);
+      setDashboardSettingsDialog(undefined);
+    });
+  }
+  async function saveAsCopy() {
+    if (!draft) return;
+    await action(async () => {
+      const { id: _id, revision: _rev, updatedAt: _u, ...body } = draft;
+      const tileLinks = validTileLinks(body.tileLinks, body.widgets);
+      body.tileLinks = tileLinks.length ? tileLinks : undefined;
+      body.name = `${body.name.trim().slice(0, 93) || 'Dashboard'} (copy)`;
+      body.widgets = snapLinkedWidgets(
+        body.widgets,
+        body.tileLinks,
+        gridWidth,
+        (body.groupLayoutWidth ?? gridWidth) - 40,
+      );
+      const created = await api<Dashboard>('/dashboards', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      setDashboards((list) => [created, ...list]);
+      setActiveId(created.id);
       setDraft(undefined);
       setDashboardSettingsDialog(undefined);
     });
@@ -1632,12 +1973,17 @@ export default function App() {
                   </div>
                 </header>
               ) : (
-                <div className="page-heading">
+                <div
+                  className={`page-heading ${editing ? 'editing-heading' : ''}`}
+                >
                   <div>
                     <div className="page-title-line">
                       <h1>{shown?.name ?? 'Your energy, at a glance.'}</h1>
                       {config?.mock && (
                         <span className="demo-badge">MOCK MODE</span>
+                      )}
+                      {editing && hasUnsavedChanges && (
+                        <span className="unsaved-badge">Unsaved changes</span>
                       )}
                     </div>
                     {!shown && (
@@ -1651,12 +1997,28 @@ export default function App() {
                       {editing ? (
                         <>
                           <button
+                            type="button"
+                            disabled={busy || !canUndo}
+                            title="Undo (Ctrl/Cmd+Z)"
+                            onClick={undoDraft}
+                          >
+                            Undo
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy || !canRedo}
+                            title="Redo (Ctrl/Cmd+Shift+Z)"
+                            onClick={redoDraft}
+                          >
+                            Redo
+                          </button>
+                          <button
                             disabled={busy}
                             onClick={() =>
                               void action(async () => {
-                                await load(activeId);
                                 setDraft(undefined);
                                 setDashboardSettingsDialog(undefined);
+                                await load(activeId);
                               })
                             }
                           >
@@ -1664,20 +2026,11 @@ export default function App() {
                           </button>
                           <button
                             className="primary"
-                            disabled={
-                              busy ||
-                              !dashboardInput.safeParse({
-                                name: draft!.name,
-                                refreshSeconds: draft!.refreshSeconds,
-                                resolution: draft!.resolution,
-                                groupLayoutWidth: draft!.groupLayoutWidth,
-                                ungroupedOnCanvas: draft!.ungroupedOnCanvas,
-                                minimumTileSize: draft!.minimumTileSize,
-                                widgets: draft!.widgets,
-                                groups: draft!.groups,
-                                displayDefaults: draft!.displayDefaults,
-                                measurementDefaults: draft!.measurementDefaults,
-                              }).success
+                            disabled={busy || !draftValidation?.success}
+                            title={
+                              draftValidation && !draftValidation.success
+                                ? draftValidation.error.issues[0]?.message
+                                : undefined
                             }
                             onClick={() => void save()}
                           >
@@ -1747,7 +2100,11 @@ export default function App() {
               )}
               {alarmFocusId && rotationSeconds > 0 && (
                 <div className="notice alarm-focus-notice" role="status">
-                  Alarm on {active?.name ?? 'dashboard'} · Rotation paused
+                  Alarm on{' '}
+                  {dashboards.find((d) => d.id === alarmFocusId)?.name ??
+                    active?.name ??
+                    'dashboard'}{' '}
+                  · Rotation paused
                   <button type="button" onClick={resumeRotation}>
                     Resume rotation
                   </button>
@@ -1779,9 +2136,28 @@ export default function App() {
               )}
               {changed && (
                 <div className="notice">
-                  This dashboard has changed in another session.{' '}
+                  <span>
+                    This dashboard has changed in another session.{' '}
+                    {editing &&
+                      'Save your edits as a copy, download your draft, or cancel to load the latest version.'}
+                  </span>
                   {editing ? (
-                    'Cancel to load the latest version.'
+                    <div className="notice-actions">
+                      <button
+                        type="button"
+                        disabled={busy || !draftValidation?.success}
+                        onClick={() => void saveAsCopy()}
+                      >
+                        Save as copy
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy || !draft}
+                        onClick={() => draft && downloadDashboards([draft])}
+                      >
+                        Download draft JSON
+                      </button>
+                    </div>
                   ) : (
                     <button onClick={() => void action(() => load(activeId))}>
                       Load latest
@@ -1792,6 +2168,13 @@ export default function App() {
               {readingError && (
                 <div className="notice error" role="alert">
                   Connection error: {readingError} Retrying automatically.
+                </div>
+              )}
+              {editing && draftValidation && !draftValidation.success && (
+                <div className="notice error" role="alert">
+                  Cannot save dashboard:{' '}
+                  {draftValidation.error.issues[0]?.message ??
+                    'Check dashboard settings.'}
                 </div>
               )}
               {editing && (
@@ -2116,7 +2499,11 @@ export default function App() {
                       aria-label="Add dashboard content"
                     >
                       <span className="editor-action-label">Measurements</span>
-                      <button className="primary" onClick={() => addTile()}>
+                      <button
+                        className="primary"
+                        disabled={busy || draft!.widgets.length >= 100}
+                        onClick={() => addTile()}
+                      >
                         ＋ Add tile
                       </button>
                       <button
@@ -2284,13 +2671,15 @@ export default function App() {
                             <button
                               className="primary"
                               onClick={() => {
-                                if (!editing)
+                                if (!editing) {
+                                  setRotationSeconds(0);
                                   setDraft(
                                     fixedCanvasDashboard(
                                       editableDashboard(active!),
                                       containerRef.current,
                                     ),
                                   );
+                                }
                                 addTile();
                               }}
                             >
@@ -2435,7 +2824,10 @@ export default function App() {
                                             </>
                                           )}
                                           <button
-                                            disabled={busy}
+                                            disabled={
+                                              busy ||
+                                              draft!.widgets.length >= 100
+                                            }
                                             onClick={() =>
                                               addTile(section.group?.id)
                                             }
@@ -2466,8 +2858,8 @@ export default function App() {
                                     {editing && (
                                       <span>
                                         {' '}
-                                        Use “Add value”, “Add graph”, or “Edit
-                                        group” to select existing tiles.
+                                        Use “Add value” or “Add graph” to add
+                                        tiles to this group.
                                       </span>
                                     )}
                                   </div>
@@ -2526,187 +2918,194 @@ export default function App() {
                                       updateLayout(layout, section.group?.id)
                                     }
                                   >
-                                    {section.widgets.map((widget) => (
-                                      <div
-                                        key={widget.id}
-                                        data-testid={`tile-${widget.id}`}
-                                        aria-label={`Tile ${widget.label}`}
-                                      >
-                                        {'kind' in widget &&
-                                        widget.kind === 'log' ? (
-                                          <LogTileView
-                                            widget={widget}
-                                            events={events}
-                                            editing={editing}
-                                            onEdit={() => setLogEditor(widget)}
-                                            onRemove={() =>
-                                              setDraft(
-                                                (d) =>
-                                                  d && {
-                                                    ...d,
-                                                    widgets: d.widgets.filter(
-                                                      (w) => w.id !== widget.id,
-                                                    ),
-                                                  },
-                                              )
-                                            }
-                                          />
-                                        ) : isConsumptionTile(widget) ? (
-                                          <ConsumptionTileView
-                                            widget={widget}
-                                            dashboardId={shown.id}
-                                            dashboardRevision={shown.revision}
-                                            sourceRevision={
-                                              config?.sourceRevision
-                                            }
-                                            ready={Boolean(
-                                              active?.widgets.some(
-                                                (saved) =>
-                                                  isConsumptionTile(saved) &&
-                                                  saved.id === widget.id &&
-                                                  bindingKey(saved.binding) ===
-                                                    bindingKey(
-                                                      widget.binding,
-                                                    ) &&
-                                                  saved.unit === widget.unit,
-                                              ),
-                                            )}
-                                            now={now}
-                                            editing={editing}
-                                            onEdit={() =>
-                                              setConsumptionEditor(widget)
-                                            }
-                                            onRemove={() =>
-                                              setDraft(
-                                                (d) =>
-                                                  d && {
-                                                    ...d,
-                                                    widgets: d.widgets.filter(
-                                                      (w) => w.id !== widget.id,
-                                                    ),
-                                                  },
-                                              )
-                                            }
-                                          />
-                                        ) : isGraphTile(widget) ? (
-                                          <GraphTileView
-                                            widget={widget}
-                                            history={graphHistory}
-                                            readings={readings}
-                                            error={readingError}
-                                            staleMs={config?.staleMs ?? 60000}
-                                            now={now}
-                                            editing={editing}
-                                            onEdit={() =>
-                                              setGraphEditor(widget)
-                                            }
-                                            onRemove={() =>
-                                              setDraft(
-                                                (d) =>
-                                                  d && {
-                                                    ...d,
-                                                    widgets: d.widgets.filter(
-                                                      (w) => w.id !== widget.id,
-                                                    ),
-                                                  },
-                                              )
-                                            }
-                                          />
-                                        ) : !isMeasurementTile(widget) &&
-                                          !isTotalTile(widget) ? (
-                                          <TextTileView
-                                            widget={widget}
-                                            editing={editing}
-                                            content={
-                                              widget.kind === 'datetime'
-                                                ? dateTimeContent(widget, now)
-                                                : undefined
-                                            }
-                                            onEdit={() =>
-                                              widget.kind === 'datetime'
-                                                ? setDateTimeEditor(widget)
-                                                : setTextEditor(widget)
-                                            }
-                                            onRemove={() =>
-                                              setDraft(
-                                                (d) =>
-                                                  d && {
-                                                    ...d,
-                                                    widgets: d.widgets.filter(
-                                                      (w) => w.id !== widget.id,
-                                                    ),
-                                                  },
-                                              )
-                                            }
-                                          />
-                                        ) : (
-                                          <Tile
-                                            widget={widget}
-                                            defaults={
-                                              isMeasurementTile(widget)
-                                                ? defaultsForMeasurement(
-                                                    dashboardMeasurementDefaults(
-                                                      shown!,
-                                                    ),
-                                                    widget.binding.measurement,
-                                                    widget.unit,
+                                    {section.widgets.map((widget) => {
+                                      const selected =
+                                        editing &&
+                                        selectedTileIds.includes(widget.id);
+                                      const canDup =
+                                        !busy &&
+                                        (draft?.widgets.length ?? 0) < 100;
+                                      return (
+                                        <div
+                                          key={widget.id}
+                                          data-testid={`tile-${widget.id}`}
+                                          aria-label={`Tile ${widget.label}`}
+                                          className={
+                                            selected
+                                              ? 'tile-selected'
+                                              : undefined
+                                          }
+                                          onClickCapture={(event) => {
+                                            if (!editing || !event.shiftKey)
+                                              return;
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                            setSelectedTileIds((ids) =>
+                                              ids.includes(widget.id)
+                                                ? ids.filter(
+                                                    (id) => id !== widget.id,
                                                   )
-                                                : undefined
-                                            }
-                                            reading={
-                                              isTotalTile(widget)
-                                                ? readings.length
-                                                  ? totalReading(
-                                                      widget,
-                                                      readings,
+                                                : [...ids, widget.id],
+                                            );
+                                          }}
+                                        >
+                                          {'kind' in widget &&
+                                          widget.kind === 'log' ? (
+                                            <LogTileView
+                                              widget={widget}
+                                              events={events}
+                                              editing={editing}
+                                              onEdit={() =>
+                                                setLogEditor(widget)
+                                              }
+                                              onDuplicate={() =>
+                                                duplicateTiles([widget.id])
+                                              }
+                                              canDuplicate={canDup}
+                                              onRemove={() =>
+                                                removeTiles([widget.id])
+                                              }
+                                            />
+                                          ) : isConsumptionTile(widget) ? (
+                                            <ConsumptionTileView
+                                              widget={widget}
+                                              dashboardId={shown.id}
+                                              dashboardRevision={shown.revision}
+                                              sourceRevision={
+                                                config?.sourceRevision
+                                              }
+                                              ready={Boolean(
+                                                active?.widgets.some(
+                                                  (saved) =>
+                                                    isConsumptionTile(saved) &&
+                                                    saved.id === widget.id &&
+                                                    bindingKey(
+                                                      saved.binding,
+                                                    ) ===
+                                                      bindingKey(
+                                                        widget.binding,
+                                                      ) &&
+                                                    saved.unit === widget.unit,
+                                                ),
+                                              )}
+                                              now={now}
+                                              editing={editing}
+                                              onEdit={() =>
+                                                setConsumptionEditor(widget)
+                                              }
+                                              onDuplicate={() =>
+                                                duplicateTiles([widget.id])
+                                              }
+                                              canDuplicate={canDup}
+                                              onRemove={() =>
+                                                removeTiles([widget.id])
+                                              }
+                                            />
+                                          ) : isGraphTile(widget) ? (
+                                            <GraphTileView
+                                              widget={widget}
+                                              history={graphHistory}
+                                              readings={readings}
+                                              error={readingError}
+                                              staleMs={config?.staleMs ?? 60000}
+                                              now={now}
+                                              editing={editing}
+                                              onEdit={() =>
+                                                setGraphEditor(widget)
+                                              }
+                                              onDuplicate={() =>
+                                                duplicateTiles([widget.id])
+                                              }
+                                              canDuplicate={canDup}
+                                              onRemove={() =>
+                                                removeTiles([widget.id])
+                                              }
+                                            />
+                                          ) : !isMeasurementTile(widget) &&
+                                            !isTotalTile(widget) ? (
+                                            <TextTileView
+                                              widget={widget}
+                                              editing={editing}
+                                              content={
+                                                widget.kind === 'datetime'
+                                                  ? dateTimeContent(widget, now)
+                                                  : undefined
+                                              }
+                                              onEdit={() =>
+                                                widget.kind === 'datetime'
+                                                  ? setDateTimeEditor(widget)
+                                                  : setTextEditor(widget)
+                                              }
+                                              onDuplicate={() =>
+                                                duplicateTiles([widget.id])
+                                              }
+                                              canDuplicate={canDup}
+                                              onRemove={() =>
+                                                removeTiles([widget.id])
+                                              }
+                                            />
+                                          ) : (
+                                            <Tile
+                                              widget={widget}
+                                              defaults={
+                                                isMeasurementTile(widget)
+                                                  ? defaultsForMeasurement(
+                                                      shownMeasurementDefaults,
+                                                      widget.binding
+                                                        .measurement,
+                                                      widget.unit,
                                                     )
                                                   : undefined
-                                                : readings.find(
-                                                    (r) =>
-                                                      r.key ===
+                                              }
+                                              reading={
+                                                isTotalTile(widget)
+                                                  ? readings.length
+                                                    ? totalReading(
+                                                        widget,
+                                                        readings,
+                                                      )
+                                                    : undefined
+                                                  : readingsByKey.get(
                                                       bindingKey(
                                                         widget.binding,
                                                       ),
-                                                  )
-                                            }
-                                            graphSamples={
-                                              isMeasurementTile(widget)
-                                                ? graphHistory[
-                                                    bindingKey(widget.binding)
-                                                  ]
-                                                : undefined
-                                            }
-                                            editing={editing}
-                                            loading={loading}
-                                            error={readingError}
-                                            staleMs={config?.staleMs ?? 60000}
-                                            now={now}
-                                            onEdit={() =>
-                                              isTotalTile(widget)
-                                                ? setTotalEditor(widget)
-                                                : widget.display === 'graph'
-                                                  ? setGraphEditor(
-                                                      editableGraphFromLegacy(
-                                                        widget,
-                                                      ),
                                                     )
-                                                  : setTileEditor(widget)
-                                            }
-                                            onRemove={() =>
-                                              setDraft(
-                                                (d) =>
-                                                  d && {
-                                                    ...d,
-                                                    widgets: d.widgets.filter(
-                                                      (w) => w.id !== widget.id,
-                                                    ),
-                                                  },
-                                              )
-                                            }
-                                          />
-                                        )}
-                                      </div>
-                                    ))}
+                                              }
+                                              graphSamples={
+                                                isMeasurementTile(widget)
+                                                  ? graphHistory[
+                                                      bindingKey(widget.binding)
+                                                    ]
+                                                  : undefined
+                                              }
+                                              editing={editing}
+                                              loading={loading}
+                                              error={readingError}
+                                              staleMs={config?.staleMs ?? 60000}
+                                              now={now}
+                                              onEdit={() =>
+                                                isTotalTile(widget)
+                                                  ? setTotalEditor(widget)
+                                                  : widget.display === 'graph'
+                                                    ? setGraphEditor(
+                                                        editableGraphFromLegacy(
+                                                          widget,
+                                                        ),
+                                                      )
+                                                    : setTileEditor(widget)
+                                              }
+                                              onDuplicate={() =>
+                                                duplicateTiles([widget.id])
+                                              }
+                                              canDuplicate={canDup}
+                                              onRemove={() =>
+                                                removeTiles([widget.id])
+                                              }
+                                            />
+                                          )}
+                                        </div>
+                                      );
+                                    })}
                                   </CanvasTileGrid>
                                 )}
                               </section>
@@ -2722,6 +3121,141 @@ export default function App() {
           )}
         </main>
       </div>
+      {editing &&
+        draft &&
+        selectedTileIds.length > 0 &&
+        (() => {
+          const selectedWidgets = draft.widgets.filter((w) =>
+            selectedTileIds.includes(w.id),
+          );
+          const sameSection =
+            selectedWidgets.length >= 2 &&
+            selectedWidgets.every(
+              (w) => w.groupId === selectedWidgets[0].groupId,
+            );
+          const links = validTileLinks(draft.tileLinks, draft.widgets);
+          const anyLinked = selectedTileIds.some((id) =>
+            links.some((link) => link.includes(id)),
+          );
+          return (
+            <div
+              className="canvas-selection-bar"
+              role="toolbar"
+              aria-label="Selected tiles actions"
+            >
+              <strong>
+                {selectedTileIds.length}{' '}
+                {selectedTileIds.length === 1 ? 'tile' : 'tiles'} selected
+              </strong>
+              {sameSection && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => alignSelectedTiles('left')}
+                  >
+                    Align left
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => alignSelectedTiles('top')}
+                  >
+                    Align top
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => alignSelectedTiles('right')}
+                  >
+                    Align right
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => alignSelectedTiles('bottom')}
+                  >
+                    Align bottom
+                  </button>
+                  <button type="button" onClick={matchSelectedTileSizes}>
+                    Match size
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setDraft((d) => {
+                        if (!d) return d;
+                        const nextLinks = linkTiles(
+                          validTileLinks(d.tileLinks, d.widgets),
+                          selectedTileIds,
+                        );
+                        return {
+                          ...d,
+                          tileLinks: nextLinks.length ? nextLinks : undefined,
+                        };
+                      })
+                    }
+                  >
+                    Link
+                  </button>
+                </>
+              )}
+              {anyLinked && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDraft((d) => {
+                      if (!d) return d;
+                      const nextLinks = unlinkTiles(
+                        validTileLinks(d.tileLinks, d.widgets),
+                        selectedTileIds,
+                      );
+                      return {
+                        ...d,
+                        tileLinks: nextLinks.length ? nextLinks : undefined,
+                      };
+                    })
+                  }
+                >
+                  Unlink
+                </button>
+              )}
+              {(draft.groups?.length ?? 0) > 0 && (
+                <select
+                  aria-label="Move selected tiles to group"
+                  value=""
+                  onChange={(e) => {
+                    moveSelectedTilesToGroup(e.target.value);
+                    e.target.value = '';
+                  }}
+                >
+                  <option value="" disabled>
+                    Move to group…
+                  </option>
+                  <option value="">Ungrouped</option>
+                  {draft.groups!.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.title}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <button
+                type="button"
+                disabled={busy || draft.widgets.length >= 100}
+                onClick={() => duplicateTiles(selectedTileIds)}
+              >
+                Duplicate
+              </button>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => removeTiles(selectedTileIds)}
+              >
+                Delete
+              </button>
+              <button type="button" onClick={() => setSelectedTileIds([])}>
+                Clear
+              </button>
+            </div>
+          );
+        })()}
       {dateTimeEditor && draft && (
         <DateTimeTileEditor
           initial={dateTimeEditor === 'new' ? undefined : dateTimeEditor}
@@ -2756,12 +3290,16 @@ export default function App() {
           groups={draft.groups ?? []}
           defaultProject={readingBindings(draft.widgets)[0]?.project}
           defaultGroupId={newTileGroup}
-          onClose={() => setGraphEditor(undefined)}
+          onClose={() => {
+            setGraphEditor(undefined);
+            setNewTileGroup(undefined);
+          }}
           onSave={(widget) => {
             setDraft(
               (d) => d && saveCanvasWidget(d, widget, containerRef.current),
             );
             setGraphEditor(undefined);
+            setNewTileGroup(undefined);
           }}
         />
       )}
@@ -2815,12 +3353,16 @@ export default function App() {
             defaultProject={readingBindings(draft.widgets)[0]?.project}
             measurementDefaults={dashboardMeasurementDefaults(draft)}
             defaultGroupId={newTileGroup}
-            onClose={() => setTileEditor(undefined)}
+            onClose={() => {
+              setTileEditor(undefined);
+              setNewTileGroup(undefined);
+            }}
             onSave={(widget) => {
               setDraft(
                 (d) => d && saveCanvasWidget(d, widget, containerRef.current),
               );
               setTileEditor(undefined);
+              setNewTileGroup(undefined);
             }}
           />
         )}
@@ -2852,10 +3394,10 @@ export default function App() {
           dashboard={draft}
           onClose={() => setCopyingGroup(undefined)}
           onCopy={(title, assignments) => {
-            setDraft(
-              (d) => d && copyGroup(d, copyingGroup, title, assignments),
-            );
+            const copied = copyGroup(draft, copyingGroup, title, assignments);
+            setDraft(copied);
             setCopyingGroup(undefined);
+            setError('');
           }}
         />
       )}
@@ -2956,14 +3498,20 @@ export default function App() {
                       fixedCanvasDashboard(editableDashboard(created), null),
                     );
                   } else if (active) {
-                    await api(`/dashboards/${active.id}`, {
+                    const deletedId = active.id;
+                    await api(`/dashboards/${deletedId}`, {
                       method: 'DELETE',
                       body: JSON.stringify({ revision: active.revision }),
                     });
-                    setDashboards((ds) => ds.filter((d) => d.id !== active.id));
-                    setActiveId(
-                      dashboards.find((d) => d.id !== active.id)?.id ?? '',
-                    );
+                    setDashboards((ds) => {
+                      const remaining = ds.filter((d) => d.id !== deletedId);
+                      setActiveId((current) =>
+                        current === deletedId
+                          ? (remaining[0]?.id ?? '')
+                          : current,
+                      );
+                      return remaining;
+                    });
                   }
                   setDialog(undefined);
                 });
@@ -3029,10 +3577,7 @@ export default function App() {
       {collectorSettingsOpen && (
         <CollectorSettingsDialog
           source={config?.source}
-          onClose={() => {
-            setCollectorSettingsOpen(false);
-            setHistoryVersion((version) => version + 1);
-          }}
+          onClose={() => setCollectorSettingsOpen(false)}
           onDeleted={() => setHistoryVersion((version) => version + 1)}
         />
       )}

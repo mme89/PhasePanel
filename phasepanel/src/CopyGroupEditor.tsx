@@ -1,6 +1,7 @@
 import { measurementSources } from '../shared/totals';
 import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 import {
+  isConsumptionTile,
   isGraphTile,
   isTotalTile,
   type Dashboard,
@@ -181,6 +182,7 @@ export function CopyGroupEditor({
   const [assignments, setAssignments] = useState<Assignments>({});
   const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState('');
+  const [submitError, setSubmitError] = useState('');
   const [retry, setRetry] = useState(0);
   const [members] = useState(() =>
     dashboard.widgets.filter((tile) => tile.groupId === source.id),
@@ -207,24 +209,29 @@ export function CopyGroupEditor({
   const limit =
     (dashboard.groups?.length ?? 0) >= 50 ||
     dashboard.widgets.length + members.length > 100;
-  const duplicateTotalInputs = members
-    .filter((tile) => isTotalTile(tile) || isGraphTile(tile))
-    .some((tile) => {
-      const keys = tile.sources.map((source) => {
-        const target = assignments[sourceDeviceKey(source.binding)];
-        return JSON.stringify([
-          target?.project ?? source.binding.project,
-          target?.deviceId ?? source.binding.deviceId,
-          source.binding.measurement,
-          source.binding.channel,
-        ]);
-      });
-      return new Set(keys).size !== keys.length;
+  const duplicateSources = members.some((tile) => {
+    if (
+      !isTotalTile(tile) &&
+      !isGraphTile(tile) &&
+      !(isConsumptionTile(tile) && (tile.sources?.length ?? 0) > 1)
+    )
+      return false;
+    const tileSources = tile.sources ?? [];
+    const keys = tileSources.map((source) => {
+      const target = assignments[sourceDeviceKey(source.binding)];
+      return JSON.stringify([
+        target?.project ?? source.binding.project,
+        target?.deviceId ?? source.binding.deviceId,
+        source.binding.measurement,
+        source.binding.channel,
+      ]);
     });
+    return new Set(keys).size !== keys.length;
+  });
   const valid =
     title.trim() &&
     !limit &&
-    !duplicateTotalInputs &&
+    !duplicateSources &&
     Object.values(assignments).every(Boolean);
   return (
     <Modal onClose={onClose} labelledBy="copy-group-title">
@@ -242,11 +249,16 @@ export function CopyGroupEditor({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (valid)
+            if (!valid) return;
+            setSubmitError('');
+            try {
               onCopy(
                 title.trim(),
                 assignments as Record<string, DeviceAssignment>,
               );
+            } catch (failure) {
+              setSubmitError(message(failure));
+            }
           }}
         >
           <label>
@@ -276,10 +288,15 @@ export function CopyGroupEditor({
               setAssignments={setAssignments}
             />
           ))}
-          {duplicateTotalInputs && (
+          {duplicateSources && (
             <p role="alert" className="field-error">
-              These replacements would count the same input twice in a total.
+              These replacements would count the same input twice in a tile.
               Choose different replacement devices.
+            </p>
+          )}
+          {submitError && (
+            <p role="alert" className="field-error">
+              {submitError}
             </p>
           )}
           {limit && (

@@ -1,5 +1,5 @@
 import { Modal } from './Modal';
-import { alarmTones, type AlarmTone } from './useAlarmSound';
+import { alarmToneLabels, alarmTones, type AlarmTone } from './useAlarmSound';
 
 export function SoundSettingsDialog({
   tone,
@@ -35,7 +35,7 @@ export function SoundSettingsDialog({
           >
             {alarmTones.map((option) => (
               <option key={option} value={option}>
-                {option[0].toUpperCase() + option.slice(1)}
+                {alarmToneLabels[option]}
               </option>
             ))}
           </select>

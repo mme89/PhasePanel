@@ -3,8 +3,12 @@ import {
   deviceEventTypes,
   type DeviceEventType,
 } from '../shared/deviceEvents.js';
+import { isValidHost } from './sourceSettings.js';
 
 const eventTypeSchema = z.enum(deviceEventTypes);
+export function validTelegramBotToken(value: string): boolean {
+  return /^[A-Za-z0-9:_-]+$/.test(value);
+}
 export function validDiscordWebhookUrl(value: string): boolean {
   try {
     const url = new URL(value);
@@ -26,7 +30,14 @@ const emailAddress = z.email().max(254);
 const emailInput = z
   .object({
     enabled: z.boolean(),
-    host: z.string().trim().max(255),
+    host: z
+      .string()
+      .trim()
+      .max(255)
+      .refine(
+        (value) => !value || isValidHost(value),
+        'Enter an SMTP IP address or hostname.',
+      ),
     port: z.number().int().min(1).max(65535),
     security: z.enum(['starttls', 'tls']),
     username: z.string().trim().max(200),
@@ -43,7 +54,16 @@ export const notificationSettingsInput = z
       .object({
         enabled: z.boolean(),
         chatId: z.string().trim().max(100),
-        botToken: z.string().trim().max(200).nullable().optional(),
+        botToken: z
+          .string()
+          .trim()
+          .max(200)
+          .refine(
+            (value) => !value || validTelegramBotToken(value),
+            'Enter a valid Telegram bot token.',
+          )
+          .nullable()
+          .optional(),
       })
       .strict(),
     pushover: z
@@ -123,6 +143,26 @@ export const defaultNotificationSettings: NotificationSettings = {
   enabledAtMs: 0,
 };
 
+export type NotificationProvider =
+  'telegram' | 'pushover' | 'email' | 'discord';
+
+export function isProviderConfigured(
+  provider: NotificationProvider,
+  settings: NotificationSettings,
+): boolean {
+  if (provider === 'discord') return Boolean(settings.discord.webhookUrl);
+  if (provider === 'email')
+    return Boolean(
+      settings.email.host &&
+      settings.email.from &&
+      settings.email.recipients.length &&
+      (!settings.email.username || settings.email.password),
+    );
+  if (provider === 'telegram')
+    return Boolean(settings.telegram.botToken && settings.telegram.chatId);
+  return Boolean(settings.pushover.appToken && settings.pushover.userKey);
+}
+
 export function publicNotificationSettings(
   settings: NotificationSettings,
   revision: number,
@@ -147,12 +187,7 @@ export function publicNotificationSettings(
       username: settings.email.username,
       from: settings.email.from,
       recipients: settings.email.recipients,
-      configured: Boolean(
-        settings.email.host &&
-        settings.email.from &&
-        settings.email.recipients.length &&
-        (!settings.email.username || settings.email.password),
-      ),
+      configured: isProviderConfigured('email', settings),
       passwordSaved: Boolean(settings.email.password),
     },
     discord: {

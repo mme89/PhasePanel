@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { Client } from 'basic-ftp';
+import { isValidHost } from './sourceSettings.js';
 
 export type ConnectionCheck = {
   status: 'ok' | 'failed' | 'skipped' | 'unavailable';
@@ -17,9 +18,18 @@ export function pingHost(
   host: string,
   timeoutMs: number,
 ): Promise<ConnectionCheck> {
+  if (!isValidHost(host))
+    return Promise.resolve({
+      status: 'failed',
+      message: 'Invalid host.',
+    });
   return new Promise((resolve) => {
     const args =
-      process.platform === 'win32' ? ['-n', '1', host] : ['-c', '1', host];
+      process.platform === 'win32'
+        ? ['-n', '1', host]
+        : process.platform === 'linux'
+          ? ['-c', '1', '--', host]
+          : ['-c', '1', host];
     const child = spawn('ping', args, {
       stdio: ['ignore', 'pipe', 'ignore'],
       env:

@@ -21,6 +21,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { z, ZodError } from 'zod';
 import {
+  bindingSchema,
   dashboardInput,
   isConsumptionTile,
   projectName,
@@ -47,6 +48,7 @@ import {
   type NotificationSender,
 } from './notifications.js';
 import {
+  isProviderConfigured,
   notificationSettingsInput,
   publicNotificationSettings,
 } from './notificationSettings.js';
@@ -57,6 +59,7 @@ import {
   parseRecordingFile,
   readDeviceRecording,
   readDeviceRecordingRanges,
+  RECORDING_PROFILE_ID,
 } from './deviceHistory.js';
 import type { DeviceRecordingProfile } from '../shared/deviceHistory.js';
 import { RecordingSyncJobs } from './recordingSyncJobs.js';
@@ -108,6 +111,12 @@ export async function buildApp(
   let gridvis: GridVis;
   const inFlightReadings = new Map<string, Promise<Reading[]>>();
   function currentSource() {
+    if (activeRevision && store.sourceSettingsRevision() === activeRevision)
+      return {
+        settings: activeSettings,
+        revision: activeRevision,
+        source: gridvis,
+      };
     const current = store.getSourceSettings(initialSettings);
     if (current.revision !== activeRevision) {
       activeRevision = current.revision;
@@ -223,11 +232,19 @@ export async function buildApp(
     store.close();
   });
   app.addHook('onRequest', async (request, reply) => {
+    const remoteAddress = request.socket.remoteAddress ?? '';
+    const isLocalSocket =
+      remoteAddress === '127.0.0.1' ||
+      remoteAddress === '::1' ||
+      remoteAddress === '::ffff:127.0.0.1';
+    const isLocalHost = ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(
+      request.hostname,
+    );
     if (
       config.DESKTOP_DATA_DIR &&
       (request.url.startsWith('/api/settings/storage') ||
         request.url.startsWith('/api/settings/server')) &&
-      !['127.0.0.1', 'localhost'].includes(request.hostname)
+      (!isLocalSocket || !isLocalHost)
     )
       return reply.code(403).send({ message: 'Local access is required.' });
     // No app login: nevertheless reject cross-origin browser mutations.
@@ -362,7 +379,7 @@ export async function buildApp(
         .send({ message: 'Choose a port from 1024 to 65535.' });
     const saved = input.mode === 'auto' ? 'auto' : String(input.port);
     const settingFile = join(config.DESKTOP_DATA_DIR, 'server-port.txt');
-    const temporary = `${settingFile}.tmp`;
+    const temporary = `${settingFile}.${process.pid}.${crypto.randomUUID()}.tmp`;
     writeFileSync(temporary, `${saved}\n`);
     renameSync(temporary, settingFile);
     return serverSettings();
@@ -379,9 +396,9 @@ export async function buildApp(
       };
     const defaultDirectory = config.DESKTOP_DATA_DIR;
     const pathFile = join(defaultDirectory, 'data-directory.txt');
-    const directory = existsSync(pathFile)
-      ? readFileSync(pathFile, 'utf8').trim()
-      : defaultDirectory;
+    const directory =
+      (existsSync(pathFile) ? readFileSync(pathFile, 'utf8').trim() : '') ||
+      defaultDirectory;
     return {
       directory,
       defaultDirectory,
@@ -415,7 +432,7 @@ export async function buildApp(
       mkdirSync(selected, { recursive: true });
       accessSync(selected, constants.W_OK);
       const pathFile = join(config.DESKTOP_DATA_DIR, 'data-directory.txt');
-      const temporary = `${pathFile}.tmp`;
+      const temporary = `${pathFile}.${process.pid}.${crypto.randomUUID()}.tmp`;
       writeFileSync(temporary, `${selected}\n`);
       renameSync(temporary, pathFile);
     } catch {
@@ -530,7 +547,11 @@ export async function buildApp(
       ftp: checkFtpLogin,
     };
     const savedDevice = settings.modbus.devices.find(
-      (device) => device.project === input.project && device.id === input.id,
+      (device) =>
+        device.project === input.project &&
+        device.id === input.id &&
+        device.host === input.host &&
+        (device.ftpPort ?? 21) === (input.ftpPort ?? 21),
     );
     const ftpUsername = input.clearFtpPassword ? '' : (input.ftpUsername ?? '');
     const ftpPassword = input.clearFtpPassword
@@ -644,7 +665,11 @@ export async function buildApp(
             password:
               input.email.password === null
                 ? ''
-                : input.email.password || current.settings.email.password,
+                : input.email.password ||
+                  (input.email.host === current.settings.email.host &&
+                  input.email.port === current.settings.email.port
+                    ? current.settings.email.password
+                    : ''),
           }
         : current.settings.email,
       discord: input.discord
@@ -673,7 +698,13 @@ export async function buildApp(
         input.dashboardIds === undefined
           ? current.settings.dashboardIds
           : input.dashboardIds,
-      enabledAtMs: current.settings.enabledAtMs || Date.now(),
+      enabledAtMs:
+        input.telegram.enabled ||
+        input.pushover.enabled ||
+        (input.email?.enabled ?? current.settings.email.enabled) ||
+        (input.discord?.enabled ?? current.settings.discord.enabled)
+          ? current.settings.enabledAtMs || Date.now()
+          : 0,
     };
     if (
       settings.telegram.enabled &&
@@ -722,20 +753,10 @@ export async function buildApp(
       .strict()
       .parse(request.body);
     const { settings } = store.getNotificationSettings();
-    const configured =
-      provider === 'discord'
-        ? Boolean(settings.discord.webhookUrl)
-        : provider === 'email'
-          ? Boolean(
-              settings.email.host &&
-              settings.email.from &&
-              settings.email.recipients.length &&
-              (!settings.email.username || settings.email.password),
-            )
-          : provider === 'telegram'
-            ? Boolean(settings.telegram.botToken && settings.telegram.chatId)
-            : Boolean(settings.pushover.appToken && settings.pushover.userKey);
-    if (!settings[provider].enabled || !configured)
+    if (
+      !settings[provider].enabled ||
+      !isProviderConfigured(provider, settings)
+    )
       return reply
         .code(400)
         .send({ message: `Configure and enable ${provider} first.` });
@@ -803,9 +824,23 @@ export async function buildApp(
         JSON.stringify([item.project, item.deviceId, item.host]),
       ),
     );
+    const devicesByKey = new Map<
+      string,
+      { project: string; deviceId: string; deviceName: string; host: string }
+    >();
+    for (const item of [...statuses, ...configuredDevices]) {
+      const key = JSON.stringify([item.project, item.deviceId, item.host]);
+      if (!devicesByKey.has(key))
+        devicesByKey.set(key, {
+          project: item.project,
+          deviceId: item.deviceId,
+          deviceName: item.deviceName,
+          host: item.host,
+        });
+    }
     return {
       source: current.source,
-      devices: [...statuses, ...configuredDevices],
+      devices: [...devicesByKey.values()],
       events: rows.slice(0, limit),
       hasMore: rows.length > limit,
       fetchStatuses:
@@ -932,10 +967,7 @@ export async function buildApp(
       .object({
         scope: z.enum(['recording', 'device', 'all']),
         deviceKey: z.string().min(1).max(500).optional(),
-        profileId: z
-          .string()
-          .regex(/^(?:rec|hiddenrec)[0-9a-f]+$/i)
-          .optional(),
+        profileId: z.string().regex(RECORDING_PROFILE_ID).optional(),
         measureAll: z.boolean().optional(),
       })
       .strict()
@@ -996,6 +1028,19 @@ export async function buildApp(
       devices: [...configured, ...archived],
     };
   });
+  async function withRequestAbort<T>(
+    reply: { raw: NodeJS.EventEmitter },
+    fn: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    reply.raw.once('close', abort);
+    try {
+      return await fn(controller.signal);
+    } finally {
+      reply.raw.off('close', abort);
+    }
+  }
   app.get('/api/device-history/catalog', async (request, reply) => {
     const { deviceKey } = z
       .object({ deviceKey: z.string().min(1).max(500) })
@@ -1014,31 +1059,31 @@ export async function buildApp(
       return { profiles: saved, offline: true, removed };
     }
     let live: DeviceRecordingProfile[];
-    const controller = new AbortController();
-    const abort = () => controller.abort();
-    reply.raw.once('close', abort);
     try {
-      live = await (options.recordingLister ?? listDeviceRecordings)(
-        connection.device,
-        connection.timeoutMs,
-        controller.signal,
+      live = await withRequestAbort(reply, (signal) =>
+        (options.recordingLister ?? listDeviceRecordings)(
+          connection.device,
+          connection.timeoutMs,
+          signal,
+        ),
       );
     } catch (error) {
-      if (controller.signal.aborted) throw error;
+      if (reply.raw.closed) throw error;
       if (!saved.length) throw error;
       return { profiles: saved, offline: true };
-    } finally {
-      reply.raw.off('close', abort);
     }
     const profiles = live.map((profile) => {
       const stored = saved.find((item) => item.id === profile.id);
       if (!stored) return profile;
+      const storedByName = new Map(
+        stored.files.map((item) => [item.name, item]),
+      );
       const liveNames = new Set(profile.files.map((file) => file.name));
       return {
         ...profile,
         files: [
           ...profile.files.map((file) => {
-            const copy = stored.files.find((item) => item.name === file.name);
+            const copy = storedByName.get(file.name);
             return copy
               ? {
                   ...file,
@@ -1061,7 +1106,7 @@ export async function buildApp(
     );
     return { profiles, offline: false };
   });
-  app.get('/api/device-history/points', async (request) => {
+  app.get('/api/device-history/points', async (request, reply) => {
     const { deviceKey, file, field, statistic } = z
       .object({
         deviceKey: z.string().min(1).max(500),
@@ -1090,65 +1135,52 @@ export async function buildApp(
       };
     }
     const { device, timeoutMs } = recordingDevice(deviceKey);
-    return (options.recordingReader ?? readDeviceRecording)(
-      device,
-      timeoutMs,
-      file,
-      field,
-      statistic,
+    return withRequestAbort(reply, (signal) =>
+      (options.recordingReader ?? readDeviceRecording)(
+        device,
+        timeoutMs,
+        file,
+        field,
+        statistic,
+        signal,
+      ),
     );
   });
   app.post('/api/device-history/ranges', async (request, reply) => {
     const { deviceKey, profileId, offset, limit } = z
       .object({
         deviceKey: z.string().min(1).max(500),
-        profileId: z.string().regex(/^(?:rec|hiddenrec)[0-9a-f]+$/i),
+        profileId: z.string().regex(RECORDING_PROFILE_ID),
         offset: z.number().int().min(0).max(2000),
         limit: z.number().int().min(1).max(10),
       })
       .strict()
       .parse(request.body);
     const { device, timeoutMs } = recordingDevice(deviceKey);
-    const controller = new AbortController();
-    const abort = () => controller.abort();
-    reply.raw.once('close', abort);
-    try {
-      return await (options.recordingRangeReader ?? readDeviceRecordingRanges)(
+    return withRequestAbort(reply, (signal) =>
+      (options.recordingRangeReader ?? readDeviceRecordingRanges)(
         device,
         timeoutMs,
         profileId,
         offset,
         limit,
-        controller.signal,
-      );
-    } finally {
-      reply.raw.off('close', abort);
-    }
+        signal,
+      ),
+    );
   });
   app.post('/api/device-history/sync', async (request, reply) => {
     const { deviceKey, profileId, offset, limit } = z
       .object({
         deviceKey: z.string().min(1).max(500),
-        profileId: z.string().regex(/^(?:rec|hiddenrec)[0-9a-f]+$/i),
+        profileId: z.string().regex(RECORDING_PROFILE_ID),
         offset: z.number().int().min(0).max(2000),
         limit: z.number().int().min(1).max(10),
       })
       .strict()
       .parse(request.body);
-    const controller = new AbortController();
-    const abort = () => controller.abort();
-    reply.raw.once('close', abort);
-    try {
-      return await syncRecordingBatch(
-        deviceKey,
-        profileId,
-        offset,
-        limit,
-        controller.signal,
-      );
-    } finally {
-      reply.raw.off('close', abort);
-    }
+    return withRequestAbort(reply, (signal) =>
+      syncRecordingBatch(deviceKey, profileId, offset, limit, signal),
+    );
   });
   app.delete('/api/device-history/recordings', async (request) => {
     const { deviceKey } = z
@@ -1284,6 +1316,20 @@ export async function buildApp(
       readings: withTotalReadings(dashboard.widgets, snapshot.readings),
     };
   });
+  app.post('/api/readings/preview', async (request) => {
+    const { bindings } = z
+      .object({ bindings: z.array(bindingSchema).min(1).max(200) })
+      .parse(request.body);
+    const snapshot = await historySampler.readingsFor(
+      bindings,
+      currentSource().settings.staleMs,
+    );
+    return {
+      sourceRevision: snapshot.sourceRevision,
+      sampledAt: snapshot.sampledAt,
+      readings: snapshot.readings,
+    };
+  });
   app.get('/api/history/values', async () =>
     mappedModbusValues(currentSource().settings).map((value) => ({
       ...value,
@@ -1320,13 +1366,15 @@ export async function buildApp(
         .code(400)
         .send({ message: 'Value is not in the active mapping.' });
     const windowEnd = end ?? Date.now();
+    const sourceRevision = currentSource().revision;
     return {
-      sourceRevision: currentSource().revision,
+      sourceRevision,
       samples: store.readingHistory(
-        currentSource().revision,
+        sourceRevision,
         [key],
         windowEnd - minutes * 60_000,
         windowEnd,
+        20_000,
       ),
     };
   });
@@ -1370,6 +1418,7 @@ export async function buildApp(
         key === undefined ? keys : [key],
         since,
         windowEnd,
+        20_000,
       ),
     };
   });

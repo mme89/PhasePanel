@@ -23,7 +23,7 @@ import type {
 } from '../shared/deviceHistory.js';
 import {
   builtInModbusModels,
-  upgradeBuiltInModbusModel,
+  mergeBuiltInModbusModels,
 } from './modbusModels.js';
 import { modbusDeviceSchema, type SourceSettings } from './sourceSettings.js';
 import {
@@ -124,6 +124,8 @@ export class Store {
         sent_at_ms INTEGER,
         UNIQUE (event_key, provider)
       );
+      CREATE INDEX IF NOT EXISTS notification_deliveries_pending
+        ON notification_deliveries(status, next_attempt_ms, id);
       CREATE TABLE IF NOT EXISTS notification_dashboard_state (
         key TEXT PRIMARY KEY,
         source_revision INTEGER NOT NULL,
@@ -193,24 +195,38 @@ export class Store {
       .run(id, new Date().toISOString(), JSON.stringify(input));
     return this.get(id)!;
   }
-  createMany(inputs: DashboardInput[]): Dashboard[] {
-    this.db.exec('BEGIN');
-    let ids: string[];
+  private transaction<T>(fn: () => T, immediate = false): T {
+    this.db.exec(immediate ? 'BEGIN IMMEDIATE' : 'BEGIN');
     try {
-      const insert = this.db.prepare(
-        `INSERT INTO dashboards (id, revision, updated_at, config, sort_order)
-         VALUES (?, 1, ?, ?, (SELECT COALESCE(MIN(sort_order), 0) - 1 FROM dashboards))`,
-      );
-      ids = inputs.map((input) => {
-        const id = randomUUID();
-        insert.run(id, new Date().toISOString(), JSON.stringify(input));
-        return id;
-      });
+      const result = fn();
       this.db.exec('COMMIT');
+      return result;
     } catch (error) {
       this.db.exec('ROLLBACK');
       throw error;
     }
+  }
+  createMany(inputs: DashboardInput[]): Dashboard[] {
+    const ids = this.transaction(() => {
+      const row = this.db
+        .prepare('SELECT COALESCE(MIN(sort_order), 0) AS min FROM dashboards')
+        .get() as { min: number } | undefined;
+      const baseSortOrder = Number(row?.min ?? 0) - inputs.length;
+      const insert = this.db.prepare(
+        `INSERT INTO dashboards (id, revision, updated_at, config, sort_order)
+         VALUES (?, 1, ?, ?, ?)`,
+      );
+      return inputs.map((input, index) => {
+        const id = randomUUID();
+        insert.run(
+          id,
+          new Date().toISOString(),
+          JSON.stringify(input),
+          baseSortOrder + index,
+        );
+        return id;
+      });
+    });
     return ids.map((id) => this.get(id)!);
   }
   update(
@@ -226,34 +242,46 @@ export class Store {
     return result.changes ? this.get(id) : undefined;
   }
   delete(id: string, revision: number): boolean {
-    return Boolean(
-      this.db
-        .prepare('DELETE FROM dashboards WHERE id=? AND revision=?')
-        .run(id, revision).changes,
-    );
+    return this.transaction(() => {
+      const deleted = Boolean(
+        this.db
+          .prepare('DELETE FROM dashboards WHERE id=? AND revision=?')
+          .run(id, revision).changes,
+      );
+      if (deleted) {
+        this.db
+          .prepare(
+            "UPDATE notification_deliveries SET status='cancelled' WHERE status='pending' AND event_key LIKE ?",
+          )
+          .run(`dashboard:${id}:%`);
+        this.db
+          .prepare('DELETE FROM notification_dashboard_state WHERE key LIKE ?')
+          .run(`${id}:%`);
+      }
+      return deleted;
+    }, true);
   }
   reorder(ids: string[]): boolean {
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
+    return this.transaction(() => {
       const existing = this.db.prepare('SELECT id FROM dashboards').all();
       if (
         ids.length !== existing.length ||
         new Set(ids).size !== ids.length ||
         !existing.every((row) => ids.includes(String(row.id)))
-      ) {
-        this.db.exec('ROLLBACK');
+      )
         return false;
-      }
       const update = this.db.prepare(
         'UPDATE dashboards SET sort_order=? WHERE id=?',
       );
       ids.forEach((id, index) => update.run(index, id));
-      this.db.exec('COMMIT');
       return true;
-    } catch (error) {
-      this.db.exec('ROLLBACK');
-      throw error;
-    }
+    }, true);
+  }
+  sourceSettingsRevision(): number {
+    const row = this.db
+      .prepare('SELECT revision FROM app_settings WHERE id=1')
+      .get() as { revision: number } | undefined;
+    return row ? Number(row.revision) : 0;
   }
   getSourceSettings(initial: SourceSettings): {
     revision: number;
@@ -277,8 +305,8 @@ export class Store {
         ...settings,
         modbus: {
           ...settings.modbus,
-          models: (settings.modbus.models ?? builtInModbusModels).map(
-            upgradeBuiltInModbusModel,
+          models: mergeBuiltInModbusModels(
+            settings.modbus.models ?? builtInModbusModels,
           ),
           devices: settings.modbus.devices.map((device) =>
             modbusDeviceSchema.parse(device),
@@ -335,12 +363,19 @@ export class Store {
     revision: number;
     settings: NotificationSettings;
   } {
-    this.db
-      .prepare('INSERT OR IGNORE INTO notification_settings VALUES (1, 1, ?)')
-      .run(JSON.stringify(defaultNotificationSettings));
-    const row = this.db
+    let row = this.db
       .prepare('SELECT revision, config FROM notification_settings WHERE id=1')
-      .get()!;
+      .get();
+    if (!row) {
+      this.db
+        .prepare('INSERT OR IGNORE INTO notification_settings VALUES (1, 1, ?)')
+        .run(JSON.stringify(defaultNotificationSettings));
+      row = this.db
+        .prepare(
+          'SELECT revision, config FROM notification_settings WHERE id=1',
+        )
+        .get()!;
+    }
     return {
       revision: Number(row.revision),
       settings: {
@@ -353,81 +388,91 @@ export class Store {
     revision: number,
     settings: NotificationSettings,
   ): boolean {
-    const previous = this.getNotificationSettings().settings;
-    const updated = Boolean(
-      this.db
-        .prepare(
-          'UPDATE notification_settings SET revision=revision+1, config=? WHERE id=1 AND revision=?',
-        )
-        .run(JSON.stringify(settings), revision).changes,
-    );
-    if (updated) {
-      if (!settings.dashboardAlarms)
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const previous = this.getNotificationSettings().settings;
+      const updated = Boolean(
         this.db
           .prepare(
-            "UPDATE notification_deliveries SET status='cancelled' WHERE status='pending' AND event_key LIKE 'dashboard:%'",
+            'UPDATE notification_settings SET revision=revision+1, config=? WHERE id=1 AND revision=?',
           )
-          .run();
-      if (
-        (!previous.dashboardAlarms && settings.dashboardAlarms) ||
-        (!previous.telegram.enabled &&
-          !previous.pushover.enabled &&
-          !previous.email.enabled &&
-          !previous.discord.enabled &&
-          (settings.telegram.enabled ||
-            settings.pushover.enabled ||
-            settings.email.enabled ||
-            settings.discord.enabled))
-      )
-        this.db.prepare('DELETE FROM notification_dashboard_state').run();
-      if (
-        JSON.stringify(previous.dashboardIds) !==
-        JSON.stringify(settings.dashboardIds)
-      ) {
-        const selected = new Set(settings.dashboardIds ?? []);
-        const states = this.db
-          .prepare('SELECT key FROM notification_dashboard_state')
-          .all() as { key: string }[];
-        for (const { key } of states) {
-          if (settings.dashboardIds === null || selected.has(key.split(':')[0]))
-            continue;
+          .run(JSON.stringify(settings), revision).changes,
+      );
+      if (updated) {
+        if (!settings.dashboardAlarms)
           this.db
             .prepare(
-              "UPDATE notification_deliveries SET status='cancelled' WHERE status='pending' AND event_key LIKE ?",
+              "UPDATE notification_deliveries SET status='cancelled' WHERE status='pending' AND event_key LIKE 'dashboard:%'",
             )
-            .run(`dashboard:${key}:%`);
+            .run();
+        if (
+          (!previous.dashboardAlarms && settings.dashboardAlarms) ||
+          (!previous.telegram.enabled &&
+            !previous.pushover.enabled &&
+            !previous.email.enabled &&
+            !previous.discord.enabled &&
+            (settings.telegram.enabled ||
+              settings.pushover.enabled ||
+              settings.email.enabled ||
+              settings.discord.enabled))
+        )
+          this.db.prepare('DELETE FROM notification_dashboard_state').run();
+        if (
+          JSON.stringify(previous.dashboardIds) !==
+          JSON.stringify(settings.dashboardIds)
+        ) {
+          const selected = new Set(settings.dashboardIds ?? []);
+          const states = this.db
+            .prepare('SELECT key FROM notification_dashboard_state')
+            .all() as { key: string }[];
+          for (const { key } of states) {
+            if (
+              settings.dashboardIds === null ||
+              selected.has(key.split(':')[0])
+            )
+              continue;
+            this.db
+              .prepare(
+                "UPDATE notification_deliveries SET status='cancelled' WHERE status='pending' AND event_key LIKE ?",
+              )
+              .run(`dashboard:${key}:%`);
+            this.db
+              .prepare('DELETE FROM notification_dashboard_state WHERE key=?')
+              .run(key);
+          }
+        }
+        // A changed selection must not deliver messages queued under an old rule.
+        if (
+          JSON.stringify(previous.eventTypes) !==
+            JSON.stringify(settings.eventTypes) ||
+          JSON.stringify(previous.deviceKeys) !==
+            JSON.stringify(settings.deviceKeys)
+        )
           this.db
-            .prepare('DELETE FROM notification_dashboard_state WHERE key=?')
-            .run(key);
+            .prepare(
+              "UPDATE notification_deliveries SET status='cancelled' WHERE status='pending' AND event_key NOT LIKE 'dashboard:%'",
+            )
+            .run();
+        for (const provider of [
+          'telegram',
+          'pushover',
+          'email',
+          'discord',
+        ] as const) {
+          if (!settings[provider].enabled)
+            this.db
+              .prepare(
+                "UPDATE notification_deliveries SET status='cancelled' WHERE provider=? AND status='pending'",
+              )
+              .run(provider);
         }
       }
-      // A changed selection must not deliver messages queued under an old rule.
-      if (
-        JSON.stringify(previous.eventTypes) !==
-          JSON.stringify(settings.eventTypes) ||
-        JSON.stringify(previous.deviceKeys) !==
-          JSON.stringify(settings.deviceKeys)
-      )
-        this.db
-          .prepare(
-            "UPDATE notification_deliveries SET status='cancelled' WHERE status='pending' AND event_key NOT LIKE 'dashboard:%'",
-          )
-          .run();
-      for (const provider of [
-        'telegram',
-        'pushover',
-        'email',
-        'discord',
-      ] as const) {
-        if (!settings[provider].enabled)
-          this.db
-            .prepare(
-              "UPDATE notification_deliveries SET status='cancelled' WHERE provider=? AND status='pending'",
-            )
-            .run(provider);
-      }
+      this.db.exec('COMMIT');
+      return updated;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
     }
-    return updated;
   }
   pendingNotifications(now: number) {
     return this.db
@@ -441,6 +486,13 @@ export class Store {
       message: string;
       attempts: number;
     }[];
+  }
+  cancelNotification(id: number) {
+    this.db
+      .prepare(
+        "UPDATE notification_deliveries SET status='cancelled' WHERE id=? AND status='pending'",
+      )
+      .run(id);
   }
   finishNotification(
     id: number,
@@ -457,7 +509,7 @@ export class Store {
     );
     this.db
       .prepare(
-        `UPDATE notification_deliveries SET status=?, attempts=?, next_attempt_ms=?, last_error=?, sent_at_ms=? WHERE id=?`,
+        `UPDATE notification_deliveries SET status=?, attempts=?, next_attempt_ms=?, last_error=?, sent_at_ms=? WHERE id=? AND status='pending'`,
       )
       .run(status, attempts, now + delay, error, sent ? now : null, id);
   }
@@ -649,6 +701,7 @@ export class Store {
     keys: string[],
     since: number,
     until = Number.MAX_SAFE_INTEGER,
+    maxPoints?: number,
   ): Record<
     string,
     {
@@ -674,21 +727,60 @@ export class Store {
        WHERE source_revision=? AND binding_key=? AND sampled_at_ms>=? AND sampled_at_ms<=?
        ORDER BY sampled_at_ms`,
     );
+    const mapRow = (row: Record<string, unknown>) => ({
+      time: Number(row.sampled_at_ms),
+      value: row.value === null ? null : Number(row.value),
+      status: String(row.status) as Reading['status'],
+      unit: String(row.unit),
+      sourceTimestampNs:
+        row.source_timestamp_ns === null
+          ? null
+          : String(row.source_timestamp_ns),
+    });
     for (const key of keys) {
-      history[key] = query
-        .all(sourceRevision, key, since, until)
-        .map((row) => ({
-          time: Number(row.sampled_at_ms),
-          value: row.value === null ? null : Number(row.value),
-          status: String(row.status) as Reading['status'],
-          unit: String(row.unit),
-          sourceTimestampNs:
-            row.source_timestamp_ns === null
-              ? null
-              : String(row.source_timestamp_ns),
-        }));
+      const rows = query.all(sourceRevision, key, since, until) as Record<
+        string,
+        unknown
+      >[];
+      if (maxPoints && rows.length > maxPoints) {
+        const sampled: ReturnType<typeof mapRow>[] = [];
+        const step = (rows.length - 1) / (maxPoints - 1);
+        for (let index = 0; index < maxPoints; index++)
+          sampled.push(mapRow(rows[Math.round(index * step)]));
+        history[key] = sampled;
+      } else {
+        history[key] = rows.map(mapRow);
+      }
     }
     return history;
+  }
+  pruneNotifications(cutoffMs: number, maxRows = 5000) {
+    this.db
+      .prepare(
+        `DELETE FROM notification_deliveries
+         WHERE status <> 'pending' AND (
+           (sent_at_ms IS NOT NULL AND sent_at_ms < ?)
+           OR next_attempt_ms < ?
+           OR id NOT IN (SELECT id FROM notification_deliveries ORDER BY id DESC LIMIT ?)
+         )`,
+      )
+      .run(cutoffMs, cutoffMs, maxRows);
+  }
+  pruneDeviceEvents(maxRows = 50_000) {
+    const count = Number(
+      (
+        this.db.prepare('SELECT COUNT(*) AS count FROM device_events').get() as
+          { count: number } | undefined
+      )?.count ?? 0,
+    );
+    if (count <= maxRows) return;
+    this.db
+      .prepare(
+        `DELETE FROM device_events WHERE rowid NOT IN (
+           SELECT rowid FROM device_events ORDER BY started_at_ms DESC LIMIT ?
+         )`,
+      )
+      .run(maxRows);
   }
   consumption(
     sourceRevision: number,

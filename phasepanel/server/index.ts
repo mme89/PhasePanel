@@ -5,9 +5,20 @@ const app = await buildApp(config, { logger: true });
 await app.listen({ host: config.HOST, port: config.PORT });
 let closing = false;
 function close() {
-  if (closing) return;
+  if (closing) {
+    process.exit(1);
+    return;
+  }
   closing = true;
-  void app.close().then(() => process.exit(0));
+  const forceExit = setTimeout(() => process.exit(1), 10_000);
+  forceExit.unref();
+  void app
+    .close()
+    .then(() => process.exit(0))
+    .catch((error) => {
+      app.log.error(error);
+      process.exit(1);
+    });
 }
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, close);
 if (process.env.DESKTOP_LAUNCHER === '1') {

@@ -234,7 +234,7 @@ export function SourceSettingsDialog({
             baseUrl: settings.gridvis.baseUrl,
             username: settings.gridvis.username,
             timeoutMs: settings.gridvis.timeoutMs,
-            ...(password ? { password } : {}),
+            ...(password && !clearPassword ? { password } : {}),
             clearPassword,
           },
           modbus: settings.modbus,
@@ -265,7 +265,15 @@ export function SourceSettingsDialog({
             </div>
           )}
           {!settings ? (
-            <p>Loading settings…</p>
+            error ? (
+              <footer className="modal-actions">
+                <button type="button" onClick={onClose}>
+                  Close
+                </button>
+              </footer>
+            ) : (
+              <p>Loading settings…</p>
+            )
           ) : (
             <form
               onSubmit={(event) => {
@@ -369,9 +377,10 @@ export function SourceSettingsDialog({
                                 <input
                                   type="checkbox"
                                   checked={clearPassword}
-                                  onChange={(event) =>
-                                    setClearPassword(event.target.checked)
-                                  }
+                                  onChange={(event) => {
+                                    setClearPassword(event.target.checked);
+                                    if (event.target.checked) setPassword('');
+                                  }}
                                 />
                                 Clear saved password
                               </label>
@@ -695,7 +704,7 @@ export function SourceSettingsDialog({
                                         Apply to all
                                       </button>
                                       <input
-                                        aria-label="FTP user"
+                                        aria-label={`FTP user for ${device.name || `device ${index + 1}`}`}
                                         value={device.ftpUsername ?? ''}
                                         autoComplete="off"
                                         onChange={(event) =>
@@ -709,7 +718,7 @@ export function SourceSettingsDialog({
                                   <td>
                                     <div className="source-device-ftp-password">
                                       <input
-                                        aria-label="FTP password"
+                                        aria-label={`FTP password for ${device.name || `device ${index + 1}`}`}
                                         type="password"
                                         value={device.ftpPassword ?? ''}
                                         placeholder={
@@ -757,7 +766,7 @@ export function SourceSettingsDialog({
                                   </td>
                                   <td>
                                     <input
-                                      aria-label="FTP port"
+                                      aria-label={`FTP port for ${device.name || `device ${index + 1}`}`}
                                       type="number"
                                       min="1"
                                       max="65535"

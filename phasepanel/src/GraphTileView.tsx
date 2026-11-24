@@ -13,6 +13,8 @@ export function GraphTileView({
   now,
   editing,
   onEdit,
+  onDuplicate,
+  canDuplicate = true,
   onRemove,
 }: {
   widget: GraphTile;
@@ -23,6 +25,8 @@ export function GraphTileView({
   now: number;
   editing: boolean;
   onEdit: () => void;
+  onDuplicate?: () => void;
+  canDuplicate?: boolean;
   onRemove: () => void;
 }) {
   const [controlsTarget, setControlsTarget] = useState<HTMLElement | null>(
@@ -97,6 +101,15 @@ export function GraphTileView({
           <button aria-label={`Edit ${widget.label}`} onClick={onEdit}>
             Configure
           </button>
+          {onDuplicate && (
+            <button
+              aria-label={`Duplicate ${widget.label}`}
+              disabled={!canDuplicate}
+              onClick={onDuplicate}
+            >
+              Duplicate
+            </button>
+          )}
           <button aria-label={`Remove ${widget.label}`} onClick={onRemove}>
             Remove
           </button>

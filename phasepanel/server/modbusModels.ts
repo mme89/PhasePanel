@@ -3,6 +3,151 @@ import {
   type ModbusModel,
 } from '../shared/modbusModels.js';
 
+// Standardized Janitza 19000–19077 float32 live-reading and energy block shared
+// across UMG 605-PRO, 509-PRO, 512-PRO, 96-PA, 96-PQ-L, 96RM-E, and 508.
+function standardJanitzaModel(id: string, name: string): ModbusModel {
+  return {
+    id,
+    name,
+    firstRegister: 19000,
+    registerCount: 78,
+    measurements: [
+      ...[1, 2, 3].map((phase) => ({
+        measurement: 'U_Effective',
+        channel: `L${phase}`,
+        label: 'Voltage',
+        channelLabel: `L${phase}`,
+        unit: 'V',
+        address: 19000 + (phase - 1) * 2,
+      })),
+      ...[
+        ['L1-L2', 19006],
+        ['L2-L3', 19008],
+        ['L3-L1', 19010],
+      ].map(([channel, address]) => ({
+        measurement: 'U_LL_Effective',
+        channel: String(channel),
+        label: 'Line-to-line voltage',
+        channelLabel: String(channel),
+        unit: 'V',
+        address: Number(address),
+      })),
+      ...[1, 2, 3].map((phase) => ({
+        measurement: 'I_Effective',
+        channel: `L${phase}`,
+        label: 'Current',
+        channelLabel: `L${phase}`,
+        unit: 'A',
+        address: 19012 + (phase - 1) * 2,
+      })),
+      {
+        measurement: 'I_Neutral',
+        channel: 'SUM13',
+        label: 'Neutral current',
+        channelLabel: 'L1–L3 vector sum',
+        unit: 'A',
+        address: 19018,
+      },
+      ...[1, 2, 3].map((phase) => ({
+        measurement: 'PowerActive',
+        channel: `L${phase}`,
+        label: 'Active power',
+        channelLabel: `L${phase}`,
+        unit: 'W',
+        address: 19020 + (phase - 1) * 2,
+      })),
+      {
+        measurement: 'PowerActive',
+        channel: 'SUM13',
+        label: 'Active power',
+        channelLabel: 'Total L1–L3',
+        unit: 'W',
+        address: 19026,
+      },
+      ...[1, 2, 3].map((phase) => ({
+        measurement: 'PowerApparent',
+        channel: `L${phase}`,
+        label: 'Apparent power',
+        channelLabel: `L${phase}`,
+        unit: 'VA',
+        address: 19028 + (phase - 1) * 2,
+      })),
+      {
+        measurement: 'PowerApparent',
+        channel: 'SUM13',
+        label: 'Apparent power',
+        channelLabel: 'Total L1–L3',
+        unit: 'VA',
+        address: 19034,
+      },
+      ...[1, 2, 3].map((phase) => ({
+        measurement: 'PowerReactive',
+        channel: `L${phase}`,
+        label: 'Reactive power',
+        channelLabel: `L${phase}`,
+        unit: 'VAr',
+        address: 19036 + (phase - 1) * 2,
+      })),
+      {
+        measurement: 'PowerReactive',
+        channel: 'SUM13',
+        label: 'Reactive power',
+        channelLabel: 'Total L1–L3',
+        unit: 'VAr',
+        address: 19042,
+      },
+      ...[1, 2, 3].map((phase) => ({
+        measurement: 'PowerFactor',
+        channel: `L${phase}`,
+        label: 'Power factor',
+        channelLabel: `L${phase}`,
+        unit: '',
+        address: 19044 + (phase - 1) * 2,
+      })),
+      {
+        measurement: 'Frequency',
+        channel: 'Overall',
+        label: 'Frequency',
+        channelLabel: 'Overall',
+        unit: 'Hz',
+        address: 19050,
+      },
+      ...[1, 2, 3].map((phase) => ({
+        measurement: 'EnergyActiveImport',
+        channel: `L${phase}`,
+        label: 'Active energy consumption',
+        channelLabel: `L${phase}`,
+        unit: 'Wh',
+        address: 19062 + (phase - 1) * 2,
+      })),
+      {
+        measurement: 'EnergyActiveImport',
+        channel: 'SUM13',
+        label: 'Active energy consumption',
+        channelLabel: 'Total L1–L3',
+        unit: 'Wh',
+        address: 19068,
+      },
+      ...[1, 2, 3].map((phase) => ({
+        measurement: 'EnergyActiveExport',
+        channel: `L${phase}`,
+        label: 'Active energy delivery',
+        channelLabel: `L${phase}`,
+        unit: 'Wh',
+        address: 19070 + (phase - 1) * 2,
+      })),
+      {
+        measurement: 'EnergyActiveExport',
+        channel: 'SUM13',
+        label: 'Active energy delivery',
+        channelLabel: 'Total L1–L3',
+        unit: 'Wh',
+        address: 19076,
+      },
+    ],
+  };
+}
+
 // UMG 604-PRO Modbus address list, firmware 5.028 and newer. Each value is a
 // 32-bit big-endian float occupying two holding registers.
 export const builtInModbusModels: ModbusModel[] = [
@@ -154,7 +299,25 @@ export const builtInModbusModels: ModbusModel[] = [
       },
     ],
   },
+  standardJanitzaModel('umg-605-pro', 'UMG 605-PRO'),
+  standardJanitzaModel('umg-509-pro', 'UMG 509-PRO'),
+  standardJanitzaModel('umg-512-pro', 'UMG 512-PRO'),
+  standardJanitzaModel('umg-96-pa', 'UMG 96-PA'),
+  standardJanitzaModel('umg-96-pq-l', 'UMG 96-PQ-L'),
+  standardJanitzaModel('umg-96rm-e', 'UMG 96RM-E'),
+  standardJanitzaModel('umg-508', 'UMG 508'),
 ];
+
+// Upgrade untouched legacy built-in models and append any newly added built-in
+// models that are not yet present in an existing database.
+export function mergeBuiltInModbusModels(models: ModbusModel[]): ModbusModel[] {
+  const upgraded = models.map(upgradeBuiltInModbusModel);
+  const existingIds = new Set(upgraded.map((model) => model.id));
+  return [
+    ...upgraded,
+    ...builtInModbusModels.filter((model) => !existingIds.has(model.id)),
+  ];
+}
 
 // Expand an untouched copy of the original ten-value model on existing installs.
 // Keep user-edited built-in models exactly as saved.

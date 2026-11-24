@@ -83,11 +83,21 @@ export function CanvasTileGrid({
                 );
               }
               if (!active || !session) return next;
+              const offset = origin();
+              const maxY =
+                canvasHeight === undefined
+                  ? 10000 * 92
+                  : Math.max(
+                      0,
+                      (canvasHeight - canvasBottomInset - offset.y) /
+                        groupScale,
+                    );
               const flowed = reflowTiles(
                 session.layout,
                 active,
                 session.swap,
                 cols,
+                maxY,
               );
               return preservesLinkedOffsets(session.layout, flowed, linkedTiles)
                 ? flowed
@@ -132,6 +142,7 @@ export function CanvasTileGrid({
       linkedTiles,
       canvasHeight,
       canvasBottomInset,
+      canvasScale,
       groupScale,
       props.width,
     ],
@@ -222,6 +233,7 @@ export function CanvasTileGrid({
       innerRef={container}
       compactor={compactor}
       onDragStart={(next, old, item, ...rest) => {
+        keyboardLayout.current = null;
         if (item)
           gesture.current = {
             layout: next.map((entry) => ({ ...entry })),
@@ -235,6 +247,7 @@ export function CanvasTileGrid({
         props.onDragStop?.(...args);
       }}
       onResizeStart={(next, old, item, ...rest) => {
+        keyboardLayout.current = null;
         if (item)
           gesture.current = {
             layout: next.map((entry) => ({ ...entry })),
@@ -264,36 +277,43 @@ export function CanvasTileGrid({
         minH: 1,
       }))}
       onLayoutChange={(next) => {
-        const converted = next.map((item) => {
-          const previous = layout.find((p) => p.i === item.i)!;
+        const converted = next.flatMap((item) => {
+          const previous = layout.find((p) => p.i === item.i);
+          if (!previous) return [];
           // Preserve exact stored values when the pixel conversion did not move them.
           const stable = (value: number, old: number) =>
             Math.abs(value - old) < 1e-9 ? old : value;
-          return {
-            ...previous,
-            x: stable(item.x / pitchX, previous.x),
-            y: stable(item.y / pitchY, previous.y),
-            w: stable((item.w + 20) / pitchX, previous.w),
-            h: stable((item.h + 20) / pitchY, previous.h),
-          };
+          return [
+            {
+              ...previous,
+              x: stable(item.x / pitchX, previous.x),
+              y: stable(item.y / pitchY, previous.y),
+              w: stable((item.w + 20) / pitchX, previous.w),
+              h: stable((item.h + 20) / pitchY, previous.h),
+            },
+          ];
         });
         // A controlled keyboard update can race the grid’s internal effects.
         // Ignore stale echoes until it acknowledges the requested layout.
         const pending = keyboardLayout.current;
         if (pending) {
-          if (
-            converted.every((item) => {
-              const expected = pending.find((entry) => entry.i === item.i);
-              return (
-                expected &&
-                (['x', 'y', 'w', 'h'] as const).every(
-                  (axis) => Math.abs(item[axis] - expected[axis]) < 1e-9,
-                )
-              );
-            })
-          )
+          if (converted.length !== pending.length) {
             keyboardLayout.current = null;
-          return;
+          } else {
+            if (
+              converted.every((item) => {
+                const expected = pending.find((entry) => entry.i === item.i);
+                return (
+                  expected &&
+                  (['x', 'y', 'w', 'h'] as const).every(
+                    (axis) => Math.abs(item[axis] - expected[axis]) < 1e-5,
+                  )
+                );
+              })
+            )
+              keyboardLayout.current = null;
+            return;
+          }
         }
         props.onLayoutChange?.(converted);
       }}
@@ -338,10 +358,10 @@ export function CanvasTileGrid({
                 ? 10000
                 : Math.max(
                     0,
-                    (canvasHeight - canvasBottomInset - origin().y) /
-                      groupScale /
-                      pitchY -
-                      item.h,
+                    ((canvasHeight - canvasBottomInset - origin().y) /
+                      groupScale -
+                      Math.max(1, item.h * pitchY - 20)) /
+                      pitchY,
                   );
             const position =
               (nudgeCoordinate(

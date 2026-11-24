@@ -5,7 +5,7 @@ $repoDir = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $outputDir = Join-Path $repoDir 'dist/windows'
 $bundleDir = Join-Path $outputDir 'PhasePanel'
 $stagingDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName())
-$nodeVersion = if ($env:NODE_VERSION) { $env:NODE_VERSION } else { '24.21.0' }
+$nodeVersion = if ($env:NODE_VERSION) { $env:NODE_VERSION } else { '24.22.3' }
 $runtimeName = "node-v$nodeVersion-win-x64"
 $releaseUrl = "https://nodejs.org/dist/v$nodeVersion"
 

@@ -121,12 +121,16 @@ function GroupFrame({
     if (resize) {
       const w = contentWidth * initial.scale,
         h = naturalHeight * initial.scale;
-      const maxScale = Math.min(
-        8,
-        (designWidth - initial.x) / contentWidth,
+      const maxHeightScale =
         canvasHeight === undefined
           ? 8
-          : (canvasHeight - initial.y - 28) / naturalHeight,
+          : Math.max(
+              initial.scale,
+              (canvasHeight - initial.y - 28) / naturalHeight,
+            );
+      const maxScale = Math.max(
+        0.02,
+        Math.min(8, (designWidth - initial.x) / contentWidth, maxHeightScale),
       );
       const nextScale = Math.max(
         0.02,
@@ -216,6 +220,11 @@ function GroupFrame({
     >
       <div
         className="group-position-handle"
+        role={arranging ? 'button' : undefined}
+        tabIndex={arranging ? 0 : undefined}
+        aria-label={
+          arranging ? `Move ${group.title} with arrow keys` : undefined
+        }
         style={{
           height: 28 * unit,
           fontSize: 12 * unit,
@@ -225,6 +234,27 @@ function GroupFrame({
         onPointerMove={move}
         onPointerUp={stop}
         onPointerCancel={stop}
+        onKeyDown={(e) => {
+          if (!arranging) return;
+          const step = e.shiftKey ? 20 : 5;
+          let dx = 0;
+          let dy = 0;
+          if (e.key === 'ArrowLeft') dx = -step;
+          else if (e.key === 'ArrowRight') dx = step;
+          else if (e.key === 'ArrowUp') dy = -step;
+          else if (e.key === 'ArrowDown') dy = step;
+          else return;
+          e.preventDefault();
+          const maxX = Math.max(0, designWidth - contentWidth * scale);
+          const maxY = Math.max(
+            0,
+            (canvasHeight ?? 1000000) - naturalHeight * scale - 28,
+          );
+          const nextX = Math.max(0, Math.min(maxX, placement.x + dx));
+          const nextY = Math.max(0, Math.min(maxY, placement.y + dy));
+          if (nextX === placement.x && nextY === placement.y) return;
+          onChange([{ i: group.id, ...placement, x: nextX, y: nextY }]);
+        }}
       >
         ⠿ Move {group.title}
       </div>

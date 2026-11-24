@@ -12,8 +12,7 @@ import type { Config } from './config.js';
 import type { ModbusDevice } from './sourceSettings.js';
 import type { GridVis } from './gridvis.js';
 import { builtInModbusModels } from './modbusModels.js';
-import { defaultModbusModel } from '../shared/modbusModels.js';
-import { umg604Catalog, umg604CatalogByKey } from '../shared/umg604Catalog.js';
+import { modbusCatalogByModelId } from '../shared/modbusCatalogs.js';
 
 const measurementKey = (measurement: string, channel: string) =>
   JSON.stringify([measurement, channel]);
@@ -70,14 +69,24 @@ export function readModbusBlock(
     });
     socket.on('data', (data) => {
       const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
-      chunks.push(chunk);
       received += chunk.length;
+      if (received > 512)
+        return finish(new Error('Invalid Modbus response length.'));
+      chunks.push(chunk);
       if (received < 9) return;
       const response = Buffer.concat(chunks, received);
       const frameLength = 6 + response.readUInt16BE(4);
       if (frameLength > 260 || frameLength < 9)
         return finish(new Error('Invalid Modbus response length.'));
       if (received < frameLength) return;
+      if (
+        response.readUInt16BE(0) === 1 &&
+        response.readUInt16BE(2) === 0 &&
+        response[6] === 1 &&
+        response[7] === 0x83 &&
+        frameLength === 9
+      )
+        return finish(new Error(`Modbus exception code ${response[8]}.`));
       if (
         response.readUInt16BE(0) !== 1 ||
         response.readUInt16BE(2) !== 0 ||
@@ -87,7 +96,7 @@ export function readModbusBlock(
         frameLength !== 9 + model.registerCount * 2
       )
         return finish(new Error('Unexpected Modbus response.'));
-      finish(undefined, response);
+      finish(undefined, response.subarray(0, frameLength));
     });
     socket.on('error', () => finish(new Error('Cannot reach Modbus device.')));
     socket.on('end', () =>
@@ -104,6 +113,7 @@ export class ModbusSource implements GridVis {
     Map<string, ModbusModel['measurements'][number]>
   >;
   private inFlight = new Map<string, Promise<Buffer>>();
+  private deviceQueues = new Map<string, Promise<unknown>>();
 
   constructor(
     private config: Config,
@@ -123,8 +133,8 @@ export class ModbusSource implements GridVis {
         model.id,
         new Map(
           [
+            ...(modbusCatalogByModelId[model.id]?.values ?? []),
             ...model.measurements,
-            ...(model.id === defaultModbusModel ? umg604Catalog : []),
           ].map((item) => [
             measurementKey(item.measurement, item.channel),
             item,
@@ -186,6 +196,17 @@ export class ModbusSource implements GridVis {
     }
   }
 
+  private serializeDevice<T>(deviceKey: string, task: () => Promise<T>) {
+    const previous = this.deviceQueues.get(deviceKey) ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(task);
+    this.deviceQueues.set(deviceKey, next);
+    void next.finally(() => {
+      if (this.deviceQueues.get(deviceKey) === next)
+        this.deviceQueues.delete(deviceKey);
+    });
+    return next;
+  }
+
   async readings(bindings: Binding[]): Promise<Reading[]> {
     const unique = [
       ...new Map(
@@ -197,101 +218,116 @@ export class ModbusSource implements GridVis {
       const key = JSON.stringify([binding.project, binding.deviceId]);
       grouped.set(key, [...(grouped.get(key) ?? []), binding]);
     }
-    const groups = await Promise.all(
-      [...grouped].map(async ([key, selected]): Promise<Reading[]> => {
-        const device = this.devicesByKey.get(key);
-        const model = this.modelsById.get(device?.model ?? '');
-        const values = model && this.valuesByModel.get(model.id);
-        const supported = selected.filter((binding) =>
-          values?.has(measurementKey(binding.measurement, binding.channel)),
-        );
-        const blocks = model
-          ? [
-              {
-                firstRegister: model.firstRegister,
-                registerCount: model.registerCount,
-              },
-              ...(model.extraBlocks ?? []),
-            ]
-          : [];
-        const blockFor = (binding: Binding, address: number) =>
-          blocks.find(
-            (block) =>
-              address >= block.firstRegister &&
-              address + 1 < block.firstRegister + block.registerCount,
-          ) ??
-          (model?.id === defaultModbusModel
-            ? umg604CatalogByKey.get(
-                measurementKey(binding.measurement, binding.channel),
-              )?.block
-            : undefined);
-        const frames = new Map<number, Buffer>();
-        const failures = new Map<number, string>();
-        if (device && model) {
-          const needed = new Map(
-            supported.flatMap((binding) => {
-              const register = values?.get(
-                measurementKey(binding.measurement, binding.channel),
-              );
-              const block = register && blockFor(binding, register.address);
-              return block ? [[block.firstRegister, block] as const] : [];
-            }),
+    const entries = [...grouped];
+    const groups: Reading[][] = new Array(entries.length);
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < entries.length) {
+        const index = cursor++;
+        const [key, selected] = entries[index];
+        groups[index] = await this.serializeDevice(key, async () => {
+          const device = this.devicesByKey.get(key);
+          const model = this.modelsById.get(device?.model ?? '');
+          const values = model && this.valuesByModel.get(model.id);
+          const supported = selected.filter((binding) =>
+            values?.has(measurementKey(binding.measurement, binding.channel)),
           );
-          for (const block of needed.values()) {
-            try {
-              frames.set(
-                block.firstRegister,
-                await this.block(
-                  `${key}:${block.firstRegister}:${block.registerCount}`,
-                  device,
-                  block.firstRegister === model.firstRegister &&
-                    block.registerCount === model.registerCount
-                    ? model
-                    : { ...model, ...block },
-                ),
-              );
-            } catch (error) {
-              failures.set(
-                block.firstRegister,
-                error instanceof Error
-                  ? error.message
-                  : 'Modbus request failed.',
-              );
+          const blocks = model
+            ? [
+                {
+                  firstRegister: model.firstRegister,
+                  registerCount: model.registerCount,
+                },
+                ...(model.extraBlocks ?? []),
+              ]
+            : [];
+          const blockFor = (binding: Binding, address: number) =>
+            blocks.find(
+              (block) =>
+                address >= block.firstRegister &&
+                address + 1 < block.firstRegister + block.registerCount,
+            ) ??
+            (model
+              ? modbusCatalogByModelId[model.id]?.byKey.get(
+                  measurementKey(binding.measurement, binding.channel),
+                )?.block
+              : undefined);
+          const blockId = (block: {
+            firstRegister: number;
+            registerCount: number;
+          }) => `${block.firstRegister}:${block.registerCount}`;
+          const frames = new Map<string, Buffer>();
+          const failures = new Map<string, string>();
+          if (device && model) {
+            const needed = new Map(
+              supported.flatMap((binding) => {
+                const register = values?.get(
+                  measurementKey(binding.measurement, binding.channel),
+                );
+                const block = register && blockFor(binding, register.address);
+                return block ? [[blockId(block), block] as const] : [];
+              }),
+            );
+            for (const [id, block] of needed) {
+              try {
+                frames.set(
+                  id,
+                  await this.block(
+                    `${key}:${id}`,
+                    device,
+                    block.firstRegister === model.firstRegister &&
+                      block.registerCount === model.registerCount
+                      ? model
+                      : { ...model, ...block },
+                  ),
+                );
+              } catch (error) {
+                failures.set(
+                  id,
+                  error instanceof Error
+                    ? error.message
+                    : 'Modbus request failed.',
+                );
+              }
             }
           }
-        }
-        const retrievedAt = new Date(this.now()).toISOString();
-        return selected.map((binding): Reading => {
-          const register = values?.get(
-            measurementKey(binding.measurement, binding.channel),
-          );
-          const block = register && blockFor(binding, register.address);
-          const frame = block && frames.get(block.firstRegister);
-          const failure = !device
-            ? 'Modbus device is not configured.'
-            : block && failures.get(block.firstRegister);
-          const value =
-            frame && register && block
-              ? frame.readFloatBE(
-                  9 + (register.address - block.firstRegister) * 2,
-                )
-              : null;
-          return {
-            key: bindingKey(binding),
-            value: value !== null && Number.isFinite(value) ? value : null,
-            unit: register?.unit ?? '',
-            sourceTimestampNs: null,
-            sourceTime: null,
-            retrievedAt,
-            status: failure
-              ? 'error'
-              : value !== null && Number.isFinite(value)
-                ? 'ok'
-                : 'unavailable',
-            ...(failure ? { message: failure } : {}),
-          };
+          const retrievedAt = new Date(this.now()).toISOString();
+          return selected.map((binding): Reading => {
+            const register = values?.get(
+              measurementKey(binding.measurement, binding.channel),
+            );
+            const block = register && blockFor(binding, register.address);
+            const id = block && blockId(block);
+            const frame = id ? frames.get(id) : undefined;
+            const failure = !device
+              ? 'Modbus device is not configured.'
+              : id && failures.get(id);
+            const value =
+              frame && register && block
+                ? frame.readFloatBE(
+                    9 + (register.address - block.firstRegister) * 2,
+                  )
+                : null;
+            return {
+              key: bindingKey(binding),
+              value: value !== null && Number.isFinite(value) ? value : null,
+              unit: register?.unit ?? '',
+              sourceTimestampNs: null,
+              sourceTime: null,
+              retrievedAt,
+              status: failure
+                ? 'error'
+                : value !== null && Number.isFinite(value)
+                  ? 'ok'
+                  : 'unavailable',
+              ...(failure ? { message: failure } : {}),
+            };
+          });
         });
-      }),
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(8, entries.length) }, () => worker()),
     );
     return groups.flat();
   }

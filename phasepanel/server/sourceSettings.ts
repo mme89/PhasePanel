@@ -8,6 +8,14 @@ import type { Config } from './config.js';
 import { builtInModbusModels } from './modbusModels.js';
 import type { Binding } from '../shared/model.js';
 
+const hostnamePattern =
+  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/i;
+
+export function isValidHost(host: string): boolean {
+  if (!host || host.length > 255) return false;
+  return isIP(host) !== 0 || hostnamePattern.test(host);
+}
+
 export const modbusDeviceSchema = z.object({
   project: z.string().trim().min(1).max(200),
   id: z.string().regex(/^\d+$/).max(20),
@@ -20,14 +28,8 @@ export const modbusDeviceSchema = z.object({
     .string()
     .trim()
     .min(1)
-    .refine(
-      (host) =>
-        isIP(host) !== 0 ||
-        (/^[a-z0-9.-]+$/i.test(host) &&
-          !host.startsWith('-') &&
-          !host.endsWith('-')),
-      'Enter a device IP address or hostname.',
-    ),
+    .max(255)
+    .refine(isValidHost, 'Enter a device IP address or hostname.'),
   port: z.number().int().min(1).max(65535).default(502),
   ftpPort: z.number().int().min(1).max(65535).optional(),
   ftpUsername: z.string().max(200).optional(),
@@ -230,10 +232,15 @@ export function updatedSourceSettings(
   raw: unknown,
 ): { revision: number; settings: SourceSettings } {
   const input = sourceSettingsUpdateSchema.parse(raw);
+  const sameGridVisTarget =
+    input.gridvis.baseUrl.replace(/\/+$/, '') ===
+    current.gridvis.baseUrl.replace(/\/+$/, '');
   const password = input.gridvis.clearPassword
     ? ''
     : input.gridvis.password === undefined || input.gridvis.password === ''
-      ? current.gridvis.password
+      ? sameGridVisTarget
+        ? current.gridvis.password
+        : ''
       : input.gridvis.password;
   const settings = sourceSettingsSchema.parse({
     source: input.source,
@@ -249,10 +256,16 @@ export function updatedSourceSettings(
         const previous = current.modbus.devices.find(
           (item) => item.project === device.project && item.id === device.id,
         );
+        const sameFtpTarget =
+          previous &&
+          previous.host === device.host &&
+          (previous.ftpPort ?? 21) === (device.ftpPort ?? 21);
         const ftpPassword =
           device.clearFtpPassword || !device.ftpUsername
             ? ''
-            : device.ftpPassword || previous?.ftpPassword || '';
+            : device.ftpPassword ||
+              (sameFtpTarget ? previous.ftpPassword : '') ||
+              '';
         const { clearFtpPassword: _, ...rest } = device;
         return { ...rest, ftpPort: device.ftpPort ?? 21, ftpPassword };
       }),

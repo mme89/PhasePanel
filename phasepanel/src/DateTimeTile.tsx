@@ -20,25 +20,64 @@ const timeZoneOptions = [
   { value: 'Australia/Sydney', label: 'Australia/Sydney' },
 ];
 
+const formatterCache = new Map<
+  string,
+  {
+    date: Intl.DateTimeFormat;
+    weekday: Intl.DateTimeFormat;
+    time: Intl.DateTimeFormat;
+  }
+>();
+
+function dateTimeFormatters(
+  timeZone: string,
+  hour12: boolean,
+  showSeconds: boolean,
+) {
+  const key = `${timeZone}|${hour12 ? 1 : 0}|${showSeconds ? 1 : 0}`;
+  const cached = formatterCache.get(key);
+  if (cached) return cached;
+  let options: { timeZone?: string } = { timeZone: timeZone || undefined };
+  if (options.timeZone) {
+    try {
+      new Intl.DateTimeFormat('en-GB', options);
+    } catch {
+      options = {};
+    }
+  }
+  const entry = {
+    date: new Intl.DateTimeFormat('en-GB', {
+      ...options,
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+    }),
+    weekday: new Intl.DateTimeFormat('en-GB', {
+      ...options,
+      weekday: 'long',
+    }),
+    time: new Intl.DateTimeFormat('en-GB', {
+      ...options,
+      hour: '2-digit',
+      minute: '2-digit',
+      ...(showSeconds ? { second: '2-digit' as const } : {}),
+      hourCycle: hour12 ? 'h12' : 'h23',
+    }),
+  };
+  if (formatterCache.size >= 64) formatterCache.clear();
+  formatterCache.set(key, entry);
+  return entry;
+}
+
 export function dateTimeContent(tile: DateTimeTile, now: number) {
-  const options = { timeZone: tile.timeZone || undefined };
-  const date = new Intl.DateTimeFormat('en-GB', {
-    ...options,
-    day: '2-digit',
-    month: 'long',
-    year: 'numeric',
-  }).format(now);
-  const weekday = new Intl.DateTimeFormat('en-GB', {
-    ...options,
-    weekday: 'long',
-  }).format(now);
-  const time = new Intl.DateTimeFormat('en-GB', {
-    ...options,
-    hour: '2-digit',
-    minute: '2-digit',
-    ...(tile.showSeconds ? { second: '2-digit' as const } : {}),
-    hourCycle: tile.hour12 ? 'h12' : 'h23',
-  }).formatToParts(now);
+  const formatters = dateTimeFormatters(
+    tile.timeZone ?? '',
+    Boolean(tile.hour12),
+    Boolean(tile.showSeconds),
+  );
+  const date = formatters.date.format(now);
+  const weekday = formatters.weekday.format(now);
+  const time = formatters.time.formatToParts(now);
   const flip = tile.design === 'flip' && tile.mode !== 'date';
   const timeText = time.map((part) => part.value).join('');
   const timeGroups = [

@@ -59,7 +59,12 @@ export function GroupEditor({
               title.trim() &&
               validSize &&
               (!resizeGroupTiles ||
-                (tileWidth > 0 && tileWidth <= 12 && tileHeight > 0))
+                (Number.isFinite(tileWidth) &&
+                  tileWidth > 0 &&
+                  tileWidth <= 12 &&
+                  Number.isFinite(tileHeight) &&
+                  tileHeight > 0 &&
+                  tileHeight <= 10000))
             )
               onSave(
                 {
@@ -179,6 +184,7 @@ export function GroupEditor({
                       Tile width (columns)
                       <input
                         type="number"
+                        min="0.01"
                         max="12"
                         step="any"
                         value={tileWidth}
@@ -189,6 +195,8 @@ export function GroupEditor({
                       Tile height (rows)
                       <input
                         type="number"
+                        min="0.01"
+                        max="10000"
                         step="any"
                         value={tileHeight}
                         onChange={(e) => setTileHeight(Number(e.target.value))}
@@ -220,7 +228,12 @@ export function GroupEditor({
                 !title.trim() ||
                 !validSize ||
                 (resizeGroupTiles &&
-                  (!tileWidth || tileWidth > 12 || !tileHeight))
+                  (!Number.isFinite(tileWidth) ||
+                    tileWidth <= 0 ||
+                    tileWidth > 12 ||
+                    !Number.isFinite(tileHeight) ||
+                    tileHeight <= 0 ||
+                    tileHeight > 10000))
               }
             >
               {initial ? 'Apply group changes' : 'Create group'}

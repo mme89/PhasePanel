@@ -1,6 +1,6 @@
 import { deviceEvents, type LogEntry } from '../shared/dashboardLog';
-import { readingBindings } from '../shared/totals';
-import { useEffect, useState } from 'react';
+import { readingBindings, withTotalReadings } from '../shared/totals';
+import { useEffect, useMemo, useState } from 'react';
 import {
   bindingKey,
   isGraphTile,
@@ -18,9 +18,11 @@ export function useReadings(
   dashboard: Dashboard | undefined,
   expectedSourceRevision?: number,
   historyVersion = 0,
+  draft?: Dashboard,
 ) {
   const [events, setEvents] = useState<LogEntry[]>([]);
   const [readings, setReadings] = useState<Reading[]>([]);
+  const [previewReadings, setPreviewReadings] = useState<Reading[]>([]);
   const [graphHistory, setGraphHistory] = useState<GraphHistory>({});
   const [error, setError] = useState('');
   const [changed, setChanged] = useState(false);
@@ -55,18 +57,19 @@ export function useReadings(
     ];
     let timer: ReturnType<typeof setTimeout>;
     setLoading(true);
-    if (graphKeys.length) {
+    function loadHistory() {
+      if (!graphKeys.length) return;
       void api<{
         revision: number;
         sourceRevision: number;
         samples: GraphHistory;
-      }>(`/dashboards/${dashboard.id}/history?minutes=60`, {
+      }>(`/dashboards/${dashboard!.id}/history?minutes=60`, {
         signal: controller.signal,
       })
         .then((result) => {
           if (
             controller.signal.aborted ||
-            result.revision !== dashboard.revision ||
+            result.revision !== dashboard!.revision ||
             (sourceRevision !== undefined &&
               sourceRevision !== result.sourceRevision)
           )
@@ -80,6 +83,7 @@ export function useReadings(
           // Live polling remains available when the history endpoint fails.
         });
     }
+    loadHistory();
     async function refresh() {
       try {
         const result = await api<{
@@ -88,10 +92,7 @@ export function useReadings(
           sampledAt?: number | null;
           readings: Reading[];
         }>(`/dashboards/${dashboard!.id}/readings`, {
-          signal: AbortSignal.any([
-            controller.signal,
-            AbortSignal.timeout(65000),
-          ]),
+          signal: controller.signal,
         });
         if (controller.signal.aborted) return;
         if (result.revision === dashboard!.revision) {
@@ -99,7 +100,10 @@ export function useReadings(
             sourceRevision !== undefined &&
             sourceRevision !== result.sourceRevision;
           sourceRevision = result.sourceRevision;
-          if (sourceChanged) previous = new Map();
+          if (sourceChanged) {
+            previous = new Map();
+            loadHistory();
+          }
           if (graphKeys.length) {
             const sampledAt = result.sampledAt ?? Date.now();
             setGraphHistory((current) =>
@@ -159,9 +163,56 @@ export function useReadings(
     expectedSourceRevision,
     historyVersion,
   ]);
+  const extraBindingsKey = useMemo(() => {
+    if (!draft) return '';
+    const savedKeys = new Set(
+      (dashboard ? readingBindings(dashboard.widgets) : []).map(bindingKey),
+    );
+    const extra = readingBindings(draft.widgets).filter(
+      (b) => !savedKeys.has(bindingKey(b)),
+    );
+    return extra.length ? JSON.stringify(extra) : '';
+  }, [dashboard, draft]);
+  useEffect(() => {
+    if (!extraBindingsKey) {
+      setPreviewReadings([]);
+      return;
+    }
+    const controller = new AbortController();
+    const bindings = JSON.parse(extraBindingsKey);
+    const refreshMs = Math.max(1, (draft?.refreshSeconds ?? 5) * 1000);
+    let timer: ReturnType<typeof setTimeout>;
+    async function pollPreview() {
+      try {
+        const result = await api<{ readings: Reading[] }>('/readings/preview', {
+          method: 'POST',
+          body: JSON.stringify({ bindings }),
+          signal: controller.signal,
+        });
+        if (!controller.signal.aborted) setPreviewReadings(result.readings);
+      } catch {
+        // Preview failures never override saved dashboard polling status.
+      } finally {
+        if (!controller.signal.aborted)
+          timer = setTimeout(pollPreview, refreshMs);
+      }
+    }
+    const debounce = setTimeout(() => void pollPreview(), 150);
+    return () => {
+      controller.abort();
+      clearTimeout(debounce);
+      clearTimeout(timer);
+    };
+  }, [extraBindingsKey, draft?.refreshSeconds, expectedSourceRevision]);
+  const combinedReadings = useMemo(() => {
+    if (!draft) return readings;
+    const byKey = new Map(readings.map((r) => [r.key, r]));
+    for (const r of previewReadings) byKey.set(r.key, r);
+    return withTotalReadings(draft.widgets, [...byKey.values()]);
+  }, [draft, readings, previewReadings]);
   return {
     events,
-    readings,
+    readings: combinedReadings,
     graphHistory,
     error,
     changed,

@@ -1872,12 +1872,70 @@ main {
   flex-shrink: 0;
   padding: 6px 12px;
 }
+.notice-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.page-heading.editing-heading {
+  position: sticky;
+  top: 0;
+  z-index: 12;
+  background: var(--bg, #f7f9f4);
+  padding: 10px 0 12px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid #dfe7db;
+}
+.unsaved-badge {
+  border-radius: 100px;
+  padding: 3px 9px;
+  background: #fff3d6;
+  border: 1px solid #ecd292;
+  color: #7c560b;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tile-selected {
+  outline: 2px solid #2b6c46;
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+.canvas-selection-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 18;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid #c5d6bf;
+  background: #fbfdf9;
+  box-shadow: 0 12px 36px #10291d2b;
+  max-width: calc(100vw - 32px);
+}
+.canvas-selection-bar strong {
+  font-size: 12px;
+  color: #20372b;
+  margin-right: 4px;
+}
+.canvas-selection-bar button,
+.canvas-selection-bar select {
+  padding: 6px 10px;
+  font-size: 12px;
+  width: auto;
+}
 .edit-toolbar {
   border: 1px solid #d4dfcc;
   border-radius: 12px;
   background: #f5f8f1;
-  padding: 20px;
-  margin-bottom: 25px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
 }
 .editor-intro,
 .editor-section-heading {
@@ -1888,11 +1946,11 @@ main {
 }
 .editor-intro {
   align-items: center;
-  margin-bottom: 18px;
+  margin-bottom: 12px;
 }
 .editor-intro h2 {
-  margin: 0 0 4px;
-  font-size: 18px;
+  margin: 0 0 2px;
+  font-size: 16px;
 }
 .editor-intro p,
 .editor-section-heading p {
@@ -1909,16 +1967,16 @@ main {
 .editor-settings-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
 }
 .editor-settings-trigger {
   display: flex;
   align-items: center;
-  gap: 13px;
+  gap: 11px;
   width: 100%;
   min-width: 0;
-  min-height: 74px;
-  padding: 15px 18px;
+  min-height: 54px;
+  padding: 10px 14px;
   border: 1px solid #dbe4d5;
   border-radius: 8px;
   background: white;
@@ -2853,10 +2911,21 @@ main {
   }
 }
 .modbus-models-shell {
-  width: min(1240px, calc(100vw - 40px));
+  width: min(1280px, calc(100vw - 40px));
 }
-.modbus-models-modal {
+.modal.modbus-models-modal {
   width: 100%;
+}
+.modbus-models-modal .modal-heading {
+  display: block;
+}
+.modbus-models-subtitle {
+  margin: 6px 0 0;
+  color: #68796a;
+  font-size: 12px;
+}
+.modbus-models-body {
+  padding-bottom: 20px;
 }
 .source-device-actions {
   display: flex;
@@ -3160,22 +3229,138 @@ main {
   text-align: center;
   padding: 24px 8px !important;
 }
-.modbus-models-editor > button {
-  margin-bottom: 12px;
+.modbus-models-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
-.modbus-models-editor details {
-  border-top: 1px solid var(--border);
-  padding: 12px 0;
+.modbus-models-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
-.modbus-models-editor summary {
-  cursor: pointer;
+.modbus-models-count {
+  color: #5b6c57;
+  font-size: 12px;
   font-weight: 600;
+}
+.modbus-model-card {
+  border: 1px solid #d8e2d3;
+  border-radius: 10px;
+  background: #f8fbf6;
+  overflow: hidden;
+}
+.modbus-model-summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 16px;
+  font-weight: 600;
+  color: #20372b;
+  user-select: none;
+}
+.modbus-model-summary::-webkit-details-marker {
+  display: none;
+}
+.modbus-model-summary:hover {
+  background: #eff5ec;
+}
+.modbus-model-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+.modbus-model-title::before {
+  content: '▸';
+  color: #5b6c57;
+  font-size: 12px;
+  transition: transform 0.15s ease;
+}
+.modbus-model-card[open] > .modbus-model-summary {
+  border-bottom: 1px solid #dfe7db;
+  background: #f1f6ee;
+}
+.modbus-model-card[open] > .modbus-model-summary .modbus-model-title::before {
+  transform: rotate(90deg);
+}
+.modbus-model-badges {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.modbus-badge {
+  border-radius: 100px;
+  padding: 3px 9px;
+  background: #e5efe1;
+  color: #2d5538;
+  font-size: 11px;
+  font-weight: 600;
+}
+.modbus-badge-muted {
+  background: #edf1eb;
+  color: #5b6c57;
+}
+.modbus-model-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.modbus-section {
+  margin-bottom: 0;
+  padding: 16px;
+}
+.modbus-section-heading {
+  align-items: center;
+  margin-bottom: 14px;
+}
+.modbus-section-heading > button,
+.modbus-section-actions > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.modbus-section-heading h3 {
+  font-size: 14px;
+}
+.modbus-section-heading code {
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #eef3ec;
+  color: #365041;
+}
+.modbus-heading-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+.modbus-heading-row h3 {
+  margin: 0;
+}
+.modbus-section-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .modbus-model-fields {
   display: grid;
   grid-template-columns: 2fr 1fr 1fr;
   gap: 12px;
-  margin: 12px 0;
+  margin: 0 0 12px;
+}
+.modbus-model-fields:last-child {
+  margin-bottom: 0;
+}
+.modbus-model-fields > label {
+  margin-bottom: 0;
 }
 .modbus-read-block-fields > label {
   margin-bottom: 0;
@@ -3191,46 +3376,50 @@ main {
   border-color: #cf8e89;
   background: #fff2f1;
 }
-.modbus-models-editor small {
-  display: block;
-  margin-bottom: 12px;
-  color: #76846c;
+.modbus-table-wrap {
+  max-height: min(40vh, 360px);
+  overflow: auto;
+  margin-bottom: 0;
 }
 .modbus-mapping-table {
   width: 100%;
-  min-width: 980px;
+  min-width: 860px;
   border-collapse: collapse;
   table-layout: fixed;
 }
 .modbus-mapping-table th,
 .modbus-mapping-table td {
-  padding: 8px;
+  padding: 6px 8px;
   text-align: left;
   border-bottom: 1px solid var(--border);
 }
 .modbus-mapping-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f4f8f2;
   font-size: 10px;
   color: #5b6c57;
+  box-shadow: inset 0 -1px 0 var(--border);
 }
 .modbus-mapping-table th:nth-child(5),
 .modbus-mapping-table th:nth-child(6) {
   width: 9%;
 }
 .modbus-mapping-table th:last-child {
-  width: 11%;
+  width: 10%;
 }
 .modbus-mapping-table input {
   min-width: 0;
-  padding: 8px 9px;
+  padding: 6px 8px;
 }
-.modbus-catalog {
-  margin-top: 24px;
-  border-top: 1px solid var(--border);
-  padding-top: 18px;
+.modbus-catalog .modbus-section-heading {
+  margin-bottom: 0;
 }
-.modbus-catalog h3 {
-  margin: 0 0 14px;
-  font-size: 15px;
+.modbus-catalog-body {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #e7eee4;
 }
 .modbus-catalog-toolbar {
   display: flex;
@@ -3252,19 +3441,12 @@ main {
   overflow-wrap: anywhere;
   font-size: 12px;
 }
-.modbus-catalog-table th:last-child {
-  width: 9%;
-}
 .modbus-catalog-pages {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
   margin-top: 12px;
-}
-.modbus-model-actions {
-  display: flex;
-  gap: 10px;
 }
 .source-checkbox {
   flex-direction: row;

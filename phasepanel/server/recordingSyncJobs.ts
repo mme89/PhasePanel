@@ -275,18 +275,20 @@ export class RecordingSyncJobs {
               });
             }
             job.downloadedBytes += batch.downloadedBytes;
-            if (offset === 0) job.total += batch.total - target.fileCount;
+            if (batch.total !== actualTotal) {
+              job.total += batch.total - actualTotal;
+              actualTotal = batch.total;
+            }
             job.downloaded += batch.downloaded;
             job.skipped += batch.skipped;
             job.failedFiles += batch.failed.length;
-            actualTotal = batch.total;
             if (batch.nextOffset <= offset && offset < actualTotal)
               throw new Error('The device did not advance the recording sync.');
             job.done += batch.nextOffset - offset;
             offset = batch.nextOffset;
           } while (offset < actualTotal);
         } catch (error) {
-          if (signal.aborted || job.scope === 'recording') throw error;
+          if (signal.aborted || job.scope !== 'all') throw error;
           failedDevices.add(target.deviceKey);
           job.done += Math.max(0, actualTotal - offset);
         }

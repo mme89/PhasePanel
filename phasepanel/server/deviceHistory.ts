@@ -12,7 +12,8 @@ import type { ModbusDevice } from './sourceSettings.js';
 const MAX_RECORDING_BYTES = 1024 * 1024;
 const MAX_HEADER_BYTES = 16 * 1024;
 const MAX_FILES = 2000;
-const PROFILE_NAME = /^(?:rec[0-9a-f]+|hiddenrec[0-9a-f]+)$/i;
+export const RECORDING_PROFILE_ID = /^(?:rec[0-9a-f]+|hiddenrec[0-9a-f]+)$/i;
+const PROFILE_NAME = RECORDING_PROFILE_ID;
 const RECORDING_NAME = /^((?:rec|hiddenrec)[0-9a-f]+)_[0-9a-f]+\.\d+$/i;
 
 function badRecording(message: string): never {
@@ -109,18 +110,23 @@ export function recordingTimeRange(
   if (data.length > MAX_RECORDING_BYTES || data.length % stride !== 0)
     badRecording('file length.');
   if (data.length === 0) return null;
-  const startMs = Number(data.readBigUInt64LE(0) / 500_000n);
-  const endMs = Number(
-    data.readBigUInt64LE(data.length - stride + 8) / 500_000n,
-  );
-  if (
-    !Number.isSafeInteger(startMs) ||
-    !Number.isSafeInteger(endMs) ||
-    endMs <= startMs ||
-    endMs > 8_640_000_000_000_000
-  )
-    badRecording('timestamp.');
-  return { startMs, endMs };
+  let minStartMs = Number.POSITIVE_INFINITY;
+  let maxEndMs = Number.NEGATIVE_INFINITY;
+  for (let offset = 0; offset < data.length; offset += stride) {
+    const startMs = Number(data.readBigUInt64LE(offset) / 500_000n);
+    const endMs = Number(data.readBigUInt64LE(offset + 8) / 500_000n);
+    if (
+      !Number.isSafeInteger(startMs) ||
+      !Number.isSafeInteger(endMs) ||
+      startMs <= 0 ||
+      endMs <= startMs ||
+      endMs > 8_640_000_000_000_000
+    )
+      badRecording('timestamp.');
+    if (startMs < minStartMs) minStartMs = startMs;
+    if (endMs > maxEndMs) maxEndMs = endMs;
+  }
+  return { startMs: minStartMs, endMs: maxEndMs };
 }
 
 async function download(client: Client, name: string, maxBytes: number) {
@@ -229,43 +235,53 @@ export async function readDeviceRecording(
   name: string,
   fieldIndex: number,
   statistic: 'average' | 'minimum' | 'maximum',
+  signal?: AbortSignal,
 ) {
   const match = RECORDING_NAME.exec(name);
   if (!match)
     throw Object.assign(new Error('Invalid recording file name.'), {
       statusCode: 400,
     });
-  return withFtp(device, timeoutMs, async (client) => {
-    await client.cd('/data/header');
-    const header = parseRecordingHeader(
-      match[1],
-      await download(client, `${match[1]}.head`, MAX_HEADER_BYTES),
-    );
-    if (
-      fieldIndex >= header.fields.length ||
-      (header.kind === 'sample' && statistic !== 'average')
-    )
-      throw Object.assign(new Error('Invalid recording measurement.'), {
-        statusCode: 400,
-      });
-    await client.cd('/data/rec');
-    const file = (await client.list()).find(
-      (item) => item.type === FileType.File && item.name === name,
-    );
-    if (!file) throw new Error('Device recording file no longer exists.');
-    if (file.size > MAX_RECORDING_BYTES)
-      throw new Error('Device recording is too large.');
-    const data = await download(client, name, MAX_RECORDING_BYTES);
-    const points = parseRecordingFile(data, header, fieldIndex, statistic);
-    return {
-      profile: header,
-      file: name,
-      fieldIndex,
-      statistic,
-      range: recordingTimeRange(data, header),
-      points,
-    };
-  });
+  if (!Number.isInteger(fieldIndex) || fieldIndex < 0)
+    throw Object.assign(new Error('Invalid recording measurement.'), {
+      statusCode: 400,
+    });
+  return withFtp(
+    device,
+    timeoutMs,
+    async (client) => {
+      await client.cd('/data/header');
+      const header = parseRecordingHeader(
+        match[1],
+        await download(client, `${match[1]}.head`, MAX_HEADER_BYTES),
+      );
+      if (
+        fieldIndex >= header.fields.length ||
+        (header.kind === 'sample' && statistic !== 'average')
+      )
+        throw Object.assign(new Error('Invalid recording measurement.'), {
+          statusCode: 400,
+        });
+      await client.cd('/data/rec');
+      const file = (await client.list()).find(
+        (item) => item.type === FileType.File && item.name === name,
+      );
+      if (!file) throw new Error('Device recording file no longer exists.');
+      if (file.size > MAX_RECORDING_BYTES)
+        throw new Error('Device recording is too large.');
+      const data = await download(client, name, MAX_RECORDING_BYTES);
+      const points = parseRecordingFile(data, header, fieldIndex, statistic);
+      return {
+        profile: header,
+        file: name,
+        fieldIndex,
+        statistic,
+        range: recordingTimeRange(data, header),
+        points,
+      };
+    },
+    signal,
+  );
 }
 
 export async function readDeviceRecordingRanges(

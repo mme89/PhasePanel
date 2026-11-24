@@ -26,10 +26,14 @@ function eventKind(reason: number) {
 export async function fetchDeviceEvents(
   device: ModbusDevice,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<DeviceEvent[]> {
   if (!device.ftpUsername || !device.ftpPassword)
     throw new Error('Configure FTP username and password for this device.');
+  signal?.throwIfAborted();
   const client = new Client(timeoutMs);
+  const abort = () => client.close();
+  signal?.addEventListener('abort', abort, { once: true });
   try {
     await client.access({
       host: device.host,
@@ -38,6 +42,7 @@ export async function fetchDeviceEvents(
       password: device.ftpPassword,
       secure: false,
     });
+    signal?.throwIfAborted();
     await client.cd('/data/evt');
     const files = (await client.list())
       .filter(
@@ -50,26 +55,44 @@ export async function fetchDeviceEvents(
       throw new Error('Device event files are too large.');
     const events: DeviceEvent[] = [];
     let totalReceived = 0;
+    let parsedFiles = 0;
+    let lastError: unknown;
     for (const file of files) {
+      signal?.throwIfAborted();
       const chunks: Buffer[] = [];
-      await client.downloadTo(
-        new Writable({
-          write(chunk: Buffer, _encoding, callback) {
-            totalReceived += chunk.length;
-            if (totalReceived > MAX_FTP_BYTES)
-              callback(new Error('Device event files are too large.'));
-            else {
-              chunks.push(Buffer.from(chunk));
-              callback();
-            }
-          },
-        }),
-        file.name,
-      );
-      events.push(...parseFtpEventFile(Buffer.concat(chunks), device));
+      try {
+        await client.downloadTo(
+          new Writable({
+            write(chunk: Buffer, _encoding, callback) {
+              totalReceived += chunk.length;
+              if (totalReceived > MAX_FTP_BYTES)
+                callback(new Error('Device event files are too large.'));
+              else {
+                chunks.push(Buffer.from(chunk));
+                callback();
+              }
+            },
+          }),
+          file.name,
+        );
+        for (const event of parseFtpEventFile(Buffer.concat(chunks), device))
+          events.push(event);
+        parsedFiles++;
+      } catch (error) {
+        if (
+          signal?.aborted ||
+          client.closed ||
+          (error instanceof Error &&
+            error.message === 'Device event files are too large.')
+        )
+          throw error;
+        lastError = error;
+      }
     }
+    if (files.length > 0 && parsedFiles === 0 && lastError) throw lastError;
     return events;
   } finally {
+    signal?.removeEventListener('abort', abort);
     client.close();
   }
 }
@@ -92,6 +115,9 @@ export function parseFtpEventFile(
     if (
       !Number.isSafeInteger(startedAtMs) ||
       !Number.isSafeInteger(endedAtMs) ||
+      startedAtMs <= 0 ||
+      startedAtMs > 8_640_000_000_000_000 ||
+      endedAtMs > 8_640_000_000_000_000 ||
       endedAtMs < startedAtMs ||
       ![threshold, maximum, minimum, average].every(Number.isFinite)
     )

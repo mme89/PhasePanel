@@ -148,7 +148,7 @@ export function GraphTileEditor({
     initial?.backgroundColor,
   );
   const [groupId, setGroupId] = useState(
-    initial?.groupId ?? defaultGroupId ?? '',
+    initial ? (initial.groupId ?? '') : (defaultGroupId ?? ''),
   );
   const [project, setProject] = useState('');
   const [device, setDevice] = useState('');

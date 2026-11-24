@@ -6,7 +6,7 @@ output_dir="$repo_dir/dist/linux"
 bundle_dir="$output_dir/PhasePanel"
 staging_dir="$(mktemp -d)"
 trap 'rm -rf "$staging_dir"' EXIT
-node_version="${NODE_VERSION:-24.21.0}"
+node_version="${NODE_VERSION:-24.22.3}"
 case "$(uname -m)" in
   x86_64) architecture=x64 ;;
   aarch64) architecture=arm64 ;;

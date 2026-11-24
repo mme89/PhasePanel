@@ -39,8 +39,11 @@ export function BulkWidgetEditor({
   const [device, setDevice] = useState('');
   const [groupId, setGroupId] = useState(defaultGroupId ?? '');
   const [selected, setSelected] = useState<string[]>([]);
+  const [allowExisting, setAllowExisting] = useState(false);
   const [filter, setFilter] = useState('');
-  const [display, setDisplay] = useState<'number' | 'gauge'>('number');
+  const [display, setDisplay] = useState<
+    'number' | 'gauge' | 'bar' | 'status' | 'sparkline'
+  >('number');
   const [decimals, setDecimals] = useState(1);
   const [scaleMin, setScaleMin] = useState('0');
   const [scaleMax, setScaleMax] = useState('100');
@@ -100,8 +103,20 @@ export function BulkWidgetEditor({
   const existing = new Set(
     widgets.filter(isMeasurementTile).map((w) => bindingKey(w.binding)),
   );
-  const available = measurements.filter((m) => !existing.has(key(m)));
+  const isBlocked = (m: Measurement) => !allowExisting && existing.has(key(m));
+  const available = measurements.filter((m) => !isBlocked(m));
   const chosen = available.filter((m) => selected.includes(key(m)));
+  const threePhaseGroups = (() => {
+    const byMeasurement = new Map<string, Measurement[]>();
+    for (const m of measurements) {
+      if (!/^L[123]$/i.test(m.channel)) continue;
+      const groupKey = `${m.measurement}\u0000${m.unit}`;
+      byMeasurement.set(groupKey, [...(byMeasurement.get(groupKey) ?? []), m]);
+    }
+    return [...byMeasurement.values()]
+      .filter((items) => items.length === 3)
+      .slice(0, 6);
+  })();
   const matching = measurements.filter((m) =>
     `${m.label} ${m.measurement} ${m.channelLabel} ${m.channel} ${m.unit}`
       .toLowerCase()
@@ -110,7 +125,7 @@ export function BulkWidgetEditor({
   const visible = matching.slice(0, 200);
   const remaining = 100 - widgets.length;
   const needsScale =
-    display === 'gauge' &&
+    (display === 'gauge' || display === 'bar') &&
     chosen.some(
       (m) =>
         !defaultsForMeasurement(measurementDefaults, m.measurement, m.unit),
@@ -172,7 +187,7 @@ export function BulkWidgetEditor({
                 decimals,
                 normalColor: '#32a852',
                 useDashboardDefaults: true,
-                ...(display === 'gauge'
+                ...(display === 'gauge' || display === 'bar'
                   ? {
                       scale: defaultsForMeasurement(
                         measurementDefaults,
@@ -251,9 +266,7 @@ export function BulkWidgetEditor({
                     setSelected([
                       ...new Set([
                         ...selected,
-                        ...visible
-                          .filter((m) => !existing.has(key(m)))
-                          .map(key),
+                        ...visible.filter((m) => !isBlocked(m)).map(key),
                       ]),
                     ])
                   }
@@ -264,6 +277,40 @@ export function BulkWidgetEditor({
                   Clear selection
                 </button>
               </div>
+              {threePhaseGroups.length > 0 && (
+                <div
+                  className="bulk-actions"
+                  role="group"
+                  aria-label="Quick 3-phase sets"
+                >
+                  {threePhaseGroups.map((items) => {
+                    const addable = items.filter((m) => !isBlocked(m));
+                    const label = items[0].label;
+                    return (
+                      <button
+                        key={`${items[0].measurement}-${items[0].unit}`}
+                        type="button"
+                        disabled={addable.length === 0}
+                        onClick={() =>
+                          setSelected((current) => [
+                            ...new Set([...current, ...addable.map(key)]),
+                          ])
+                        }
+                      >
+                        + {label} (L1–L3)
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={allowExisting}
+                  onChange={(e) => setAllowExisting(e.target.checked)}
+                />
+                Allow values already on this dashboard
+              </label>
               <fieldset className="bulk-values">
                 <legend>Available values</legend>
                 {matching.length > visible.length && (
@@ -276,7 +323,7 @@ export function BulkWidgetEditor({
                   <label className="checkbox-label" key={key(m)}>
                     <input
                       type="checkbox"
-                      disabled={existing.has(key(m))}
+                      disabled={isBlocked(m)}
                       checked={selected.includes(key(m))}
                       onChange={(e) =>
                         setSelected((items) =>
@@ -324,10 +371,18 @@ export function BulkWidgetEditor({
             Display type
             <select
               value={display}
-              onChange={(e) => setDisplay(e.target.value as 'number' | 'gauge')}
+              onChange={(e) =>
+                setDisplay(
+                  e.target.value as
+                    'number' | 'gauge' | 'bar' | 'status' | 'sparkline',
+                )
+              }
             >
               <option value="number">Number</option>
               <option value="gauge">Semicircular gauge</option>
+              <option value="bar">Horizontal bar</option>
+              <option value="status">Status indicator</option>
+              <option value="sparkline">Sparkline trend</option>
             </select>
           </label>
           <label>

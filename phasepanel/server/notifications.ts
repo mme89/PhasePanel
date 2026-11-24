@@ -1,9 +1,13 @@
 import type { Store } from './store.js';
 import nodemailer from 'nodemailer';
-import type { NotificationSettings } from './notificationSettings.js';
+import {
+  isProviderConfigured,
+  validTelegramBotToken,
+  type NotificationProvider,
+  type NotificationSettings,
+} from './notificationSettings.js';
 
-export type NotificationProvider =
-  'telegram' | 'pushover' | 'email' | 'discord';
+export type { NotificationProvider };
 export type NotificationSender = (
   provider: NotificationProvider,
   message: string,
@@ -106,6 +110,8 @@ export const sendNotification: NotificationSender = async (
           token: settings.pushover.appToken,
           recipient: settings.pushover.userKey,
         };
+  if (provider === 'telegram' && !validTelegramBotToken(credentials.token))
+    throw new Error('Invalid Telegram bot token');
   const url =
     provider === 'telegram'
       ? `https://api.telegram.org/bot${credentials.token}/sendMessage`
@@ -173,23 +179,14 @@ export class NotificationDispatcher {
   }
   private async dispatch() {
     for (const item of this.store.pendingNotifications(this.now())) {
+      if (this.stopped) return;
       const { settings } = this.store.getNotificationSettings();
       const provider = item.provider as NotificationProvider;
       const config = settings[provider];
-      if (!config.enabled) continue;
-      if (
-        provider === 'discord'
-          ? !settings.discord.webhookUrl
-          : provider === 'email'
-            ? !settings.email.host ||
-              !settings.email.from ||
-              !settings.email.recipients.length ||
-              (Boolean(settings.email.username) && !settings.email.password)
-            : provider === 'telegram'
-              ? !settings.telegram.botToken || !settings.telegram.chatId
-              : !settings.pushover.appToken || !settings.pushover.userKey
-      )
+      if (!config.enabled || !isProviderConfigured(provider, settings)) {
+        this.store.cancelNotification(item.id);
         continue;
+      }
       try {
         await this.sender(provider, item.message, settings);
         this.store.finishNotification(

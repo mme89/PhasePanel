@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, message } from './api';
 import { Modal } from './Modal';
 
@@ -26,8 +26,11 @@ export function FolderChooserDialog({
   const [newName, setNewName] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
 
-  async function openFolder(directory?: string) {
+  async function openFolder(directory?: string, force = false) {
+    if (busyRef.current && !force) return;
+    busyRef.current = true;
     setBusy(true);
     setError('');
     try {
@@ -42,6 +45,7 @@ export function FolderChooserDialog({
     } catch (failure) {
       setError(message(failure));
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
@@ -49,11 +53,13 @@ export function FolderChooserDialog({
   useEffect(() => {
     void openFolder(
       initialDirectory === defaultDirectory ? undefined : initialDirectory,
+      true,
     );
   }, []);
 
   async function createFolder() {
-    if (!listing || !newName.trim()) return;
+    if (busyRef.current || !listing || !newName.trim()) return;
+    busyRef.current = true;
     setBusy(true);
     setError('');
     try {
@@ -64,9 +70,10 @@ export function FolderChooserDialog({
           body: JSON.stringify({ parent: listing.directory, name: newName }),
         },
       );
-      await openFolder(created.directory);
+      await openFolder(created.directory, true);
     } catch (failure) {
       setError(message(failure));
+      busyRef.current = false;
       setBusy(false);
     }
   }

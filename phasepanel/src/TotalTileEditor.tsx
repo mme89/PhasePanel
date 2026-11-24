@@ -35,6 +35,21 @@ export function TotalTileEditor({
   const [label, setLabel] = useState(initial?.label ?? 'Total');
   const [sources, setSources] = useState<TotalSource[]>(initial?.sources ?? []);
   const [decimals, setDecimals] = useState(initial?.decimals ?? 1);
+  const [display, setDisplay] = useState<'number' | 'gauge'>(
+    initial?.display ?? 'number',
+  );
+  const [scaleMin, setScaleMin] = useState(
+    String(initial?.scale?.min ?? initial?.range?.min ?? 0),
+  );
+  const [scaleMax, setScaleMax] = useState(
+    String(initial?.scale?.max ?? initial?.range?.max ?? 100),
+  );
+  const [normalColor, setNormalColor] = useState(
+    initial?.normalColor ?? '#316044',
+  );
+  const [rangeEnabled, setRangeEnabled] = useState(Boolean(initial?.range));
+  const [rangeMin, setRangeMin] = useState(String(initial?.range?.min ?? ''));
+  const [rangeMax, setRangeMax] = useState(String(initial?.range?.max ?? ''));
   const [groupId, setGroupId] = useState(initial?.groupId ?? '');
   const [backgroundColor, setBackgroundColor] = useState(
     initial?.backgroundColor,
@@ -124,6 +139,21 @@ export function TotalTileEditor({
   function add(source: TotalSource) {
     if (canAdd(source)) setSources((current) => [...current, source]);
   }
+  const scaleCandidate =
+    display === 'gauge' &&
+    scaleMin.trim() !== '' &&
+    scaleMax.trim() !== '' &&
+    Number.isFinite(Number(scaleMin)) &&
+    Number.isFinite(Number(scaleMax))
+      ? { min: Number(scaleMin), max: Number(scaleMax) }
+      : undefined;
+  const rangeCandidate = rangeEnabled
+    ? {
+        min: rangeMin.trim() === '' ? NaN : Number(rangeMin),
+        max: rangeMax.trim() === '' ? NaN : Number(rangeMax),
+        color: normalColor,
+      }
+    : undefined;
   const parsed = totalTileSchema.safeParse({
     ...initial,
     id,
@@ -132,6 +162,10 @@ export function TotalTileEditor({
     sources,
     unit,
     decimals,
+    display,
+    normalColor,
+    ...(scaleCandidate ? { scale: scaleCandidate } : { scale: undefined }),
+    ...(rangeCandidate ? { range: rangeCandidate } : { range: undefined }),
     groupId: groupId || undefined,
     backgroundColor,
     x: initial?.x ?? 0,
@@ -362,6 +396,107 @@ export function TotalTileEditor({
             from multiple devices. Source tiles do not need to stay on the
             dashboard.
           </p>
+          <div className="form-row">
+            <label>
+              Display type
+              <select
+                value={display}
+                onChange={(e) =>
+                  setDisplay(e.target.value as 'number' | 'gauge')
+                }
+              >
+                <option value="number">Number</option>
+                <option value="gauge">Semicircular gauge</option>
+              </select>
+            </label>
+            <label>
+              Normal color
+              <input
+                type="color"
+                value={normalColor}
+                onChange={(e) => setNormalColor(e.target.value)}
+              />
+            </label>
+          </div>
+          {display === 'gauge' && (
+            <fieldset className="display-settings">
+              <legend>Gauge scale</legend>
+              <div className="form-row">
+                <label>
+                  Scale minimum
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    value={scaleMin}
+                    onChange={(e) => setScaleMin(e.target.value)}
+                  />
+                </label>
+                <label>
+                  Scale maximum
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    value={scaleMax}
+                    onChange={(e) => setScaleMax(e.target.value)}
+                  />
+                </label>
+              </div>
+              {(!scaleCandidate ||
+                scaleCandidate.min >= scaleCandidate.max) && (
+                <p className="field-error" role="alert">
+                  Scale maximum must be greater than minimum.
+                </p>
+              )}
+            </fieldset>
+          )}
+          <fieldset className="display-settings">
+            <legend>Alarm limits</legend>
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={rangeEnabled}
+                onChange={(e) => setRangeEnabled(e.target.checked)}
+              />
+              Enable alarm range
+            </label>
+            {rangeEnabled && (
+              <>
+                <div className="form-row">
+                  <label>
+                    Minimum limit
+                    <input
+                      type="number"
+                      step="any"
+                      required
+                      value={rangeMin}
+                      onChange={(e) => setRangeMin(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Maximum limit
+                    <input
+                      type="number"
+                      step="any"
+                      required
+                      value={rangeMax}
+                      onChange={(e) => setRangeMax(e.target.value)}
+                    />
+                  </label>
+                </div>
+                {(!Number.isFinite(Number(rangeMin)) ||
+                  !Number.isFinite(Number(rangeMax)) ||
+                  rangeMin.trim() === '' ||
+                  rangeMax.trim() === '' ||
+                  Number(rangeMin) >= Number(rangeMax)) && (
+                  <p className="field-error" role="alert">
+                    Maximum limit must be greater than minimum limit.
+                  </p>
+                )}
+              </>
+            )}
+          </fieldset>
           <div className="form-row">
             <label>
               Decimal places

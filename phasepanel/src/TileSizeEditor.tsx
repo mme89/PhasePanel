@@ -17,6 +17,7 @@ export function TileSizeEditor({
     width > 0 &&
     width <= 12 &&
     height > 0 &&
+    height <= 10000 &&
     Number.isFinite(width) &&
     Number.isFinite(height);
   return (
@@ -27,6 +28,7 @@ export function TileSizeEditor({
           Tile width (columns)
           <input
             type="number"
+            min="0.01"
             max="12"
             step="any"
             value={width}
@@ -40,6 +42,8 @@ export function TileSizeEditor({
           Tile height (rows)
           <input
             type="number"
+            min="0.01"
+            max="10000"
             step="any"
             value={height}
             onChange={(e) => {

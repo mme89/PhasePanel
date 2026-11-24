@@ -9,6 +9,8 @@ import {
 } from '../shared/model.js';
 import type { Config } from './config.js';
 
+const MAX_GRIDVIS_RESPONSE_BYTES = 16 * 1024 * 1024;
+
 type ObjectMap = Record<string, unknown>;
 function object(value: unknown): ObjectMap {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -17,13 +19,48 @@ function object(value: unknown): ObjectMap {
 }
 function list(value: unknown, wrapper: string): unknown[] {
   // GridVis/Jersey wraps collections with their XML entity names in JSON.
-  const collection = Array.isArray(value) ? value : object(value)[wrapper];
-  if (!Array.isArray(collection))
-    throw new GridVisError(
-      'Unexpected GridVis response format. Check your installed API version.',
-      'format',
-    );
-  return collection;
+  if (Array.isArray(value)) return value;
+  if (value !== null && typeof value === 'object') {
+    const map = value as ObjectMap;
+    if (Object.keys(map).length === 0) return [];
+    const collection = map[wrapper];
+    if (Array.isArray(collection)) return collection;
+    if (collection !== null && typeof collection === 'object')
+      return [collection];
+  }
+  throw new GridVisError(
+    'Unexpected GridVis response format. Check your installed API version.',
+    'format',
+  );
+}
+async function readBoundedText(response: Response): Promise<string> {
+  const length = Number(response.headers.get('content-length'));
+  if (Number.isFinite(length) && length > MAX_GRIDVIS_RESPONSE_BYTES)
+    throw new GridVisError('GridVis response is too large.', 'format');
+  if (!response.body) {
+    const text = await response.text();
+    if (Buffer.byteLength(text, 'utf8') > MAX_GRIDVIS_RESPONSE_BYTES)
+      throw new GridVisError('GridVis response is too large.', 'format');
+    return text;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_GRIDVIS_RESPONSE_BYTES) {
+        await reader.cancel().catch(() => {});
+        throw new GridVisError('GridVis response is too large.', 'format');
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, total).toString('utf8');
 }
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
@@ -77,7 +114,7 @@ export class RestGridVis implements GridVis {
     if (existing) return existing;
     const request = (async () => {
       const headers: Record<string, string> = { Accept: 'application/json' };
-      if (this.config.GRIDVIS_USERNAME)
+      if (this.config.GRIDVIS_USERNAME && this.config.GRIDVIS_PASSWORD)
         headers.Authorization =
           'Basic ' +
           Buffer.from(
@@ -96,7 +133,7 @@ export class RestGridVis implements GridVis {
           );
         if (!response.ok)
           throw new GridVisError(`GridVis returned HTTP ${response.status}.`);
-        const text = await response.text();
+        const text = await readBoundedText(response);
         try {
           return parseGridVisJson(text);
         } catch {
@@ -187,7 +224,15 @@ export class RestGridVis implements GridVis {
             );
             // Swagger describes an array; some versions return a single OnlineValueMap.
             const maps = Array.isArray(raw) ? raw.map(object) : [object(raw)];
-            if (!maps.every((m) => m.value && typeof m.value === 'object'))
+            if (
+              !maps.length ||
+              !maps.every(
+                (m) =>
+                  m.value &&
+                  typeof m.value === 'object' &&
+                  !Array.isArray(m.value),
+              )
+            )
               throw new GridVisError(
                 'Unexpected GridVis live-value format.',
                 'format',

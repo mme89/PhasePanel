@@ -86,10 +86,10 @@ export const widgetSchema = z
       .regex(/^#[0-9a-fA-F]{6}$/)
       .optional(),
     backgroundColor: tileBackgroundColor,
-    x: z.number().finite().min(0).max(11),
+    x: z.number().finite().min(0).lt(12),
     y: z.number().finite().min(0).max(10000),
     w: z.number().finite().positive().max(12),
-    h: z.number().finite().positive(),
+    h: z.number().finite().positive().max(10000),
   })
   .strict()
   .refine((v) => v.x + v.w <= 12, 'Tile extends beyond grid')
@@ -158,10 +158,10 @@ export const graphTileSchema = z
     decimals: z.number().int().min(0).max(6),
     backgroundColor: tileBackgroundColor,
     graphMinutes: z.union([z.literal(5), z.literal(15), z.literal(60)]),
-    x: z.number().finite().min(0).max(11),
+    x: z.number().finite().min(0).lt(12),
     y: z.number().finite().min(0).max(10000),
     w: z.number().finite().positive().max(12),
-    h: z.number().finite().positive(),
+    h: z.number().finite().positive().max(10000),
   })
   .strict()
   .refine((v) => v.x + v.w <= 12, 'Tile extends beyond grid')
@@ -194,10 +194,10 @@ export const consumptionTileSchema = z
     decimals: z.number().int().min(0).max(6),
     backgroundColor: tileBackgroundColor,
     period: z.enum(['day', 'week', 'month']),
-    x: z.number().finite().min(0).max(11),
+    x: z.number().finite().min(0).lt(12),
     y: z.number().finite().min(0).max(10000),
     w: z.number().finite().positive().max(12),
-    h: z.number().finite().positive(),
+    h: z.number().finite().positive().max(10000),
   })
   .strict()
   .refine((v) => v.x + v.w <= 12, 'Tile extends beyond grid')
@@ -220,10 +220,10 @@ export const textTileSchema = z
     text: z.string().trim().min(1).max(5000),
     fontSize: z.number().int().min(10).max(96).default(24),
     backgroundColor: tileBackgroundColor,
-    x: z.number().finite().min(0).max(11),
+    x: z.number().finite().min(0).lt(12),
     y: z.number().finite().min(0).max(10000),
     w: z.number().finite().positive().max(12),
-    h: z.number().finite().positive(),
+    h: z.number().finite().positive().max(10000),
   })
   .strict()
   .refine((v) => v.x + v.w <= 12, 'Tile extends beyond grid');
@@ -253,10 +253,10 @@ export const dateTimeTileSchema = z
           return false;
         }
       }, 'Enter a valid time zone, for example Europe/Berlin or UTC'),
-    x: z.number().finite().min(0).max(11),
+    x: z.number().finite().min(0).lt(12),
     y: z.number().finite().min(0).max(10000),
     w: z.number().finite().positive().max(12),
-    h: z.number().finite().positive(),
+    h: z.number().finite().positive().max(10000),
   })
   .strict()
   .refine((v) => v.x + v.w <= 12, 'Tile extends beyond grid');
@@ -270,10 +270,10 @@ export const logTileSchema = z
     fontSize: z.number().int().min(10).max(96).optional(),
     backgroundColor: tileBackgroundColor,
     maxEntries: z.number().int().min(10).max(500).default(100),
-    x: z.number().finite().min(0).max(11),
+    x: z.number().finite().min(0).lt(12),
     y: z.number().finite().min(0).max(10000),
     w: z.number().finite().positive().max(12),
-    h: z.number().finite().positive(),
+    h: z.number().finite().positive().max(10000),
   })
   .strict()
   .refine((v) => v.x + v.w <= 12, 'Tile extends beyond grid');

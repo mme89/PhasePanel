@@ -183,6 +183,14 @@ export function LineGraph({
     : fullStart;
   const end = start + viewDuration;
   const zoomed = viewDuration < fullDuration - 1;
+  const wheelState = useRef({
+    start,
+    end,
+    fullStart,
+    fullEnd,
+    fullDuration,
+  });
+  wheelState.current = { start, end, fullStart, fullEnd, fullDuration };
   useEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
@@ -190,29 +198,37 @@ export function LineGraph({
       event.preventDefault();
       setHoverTime(null);
       const bounds = svg.getBoundingClientRect();
+      if (bounds.width <= 0) return;
+      const {
+        start: currentStart,
+        end: currentEnd,
+        fullStart: minStart,
+        fullEnd: maxEnd,
+        fullDuration: maxDuration,
+      } = wheelState.current;
       const ratio = Math.max(
         0,
         Math.min(1, (event.clientX - bounds.left) / bounds.width),
       );
-      const duration = end - start;
+      const duration = currentEnd - currentStart;
       const nextDuration = Math.max(
-        Math.min(5_000, fullDuration),
-        Math.min(fullDuration, duration * Math.exp(event.deltaY * 0.0015)),
+        Math.min(5_000, maxDuration),
+        Math.min(maxDuration, duration * Math.exp(event.deltaY * 0.0015)),
       );
-      if (nextDuration >= fullDuration - 1) {
+      if (nextDuration >= maxDuration - 1) {
         setViewport(null);
         return;
       }
-      const anchor = start + ratio * duration;
+      const anchor = currentStart + ratio * duration;
       const nextStart = Math.max(
-        fullStart,
-        Math.min(fullEnd - nextDuration, anchor - ratio * nextDuration),
+        minStart,
+        Math.min(maxEnd - nextDuration, anchor - ratio * nextDuration),
       );
       setViewport({ start: nextStart, end: nextStart + nextDuration });
     };
     svg.addEventListener('wheel', zoom, { passive: false });
     return () => svg.removeEventListener('wheel', zoom);
-  }, [start, end, fullStart, fullEnd, fullDuration]);
+  }, []);
   const legend = series.map((item) => ({
     ...item,
     samples: item.samples.filter(
@@ -246,8 +262,12 @@ export function LineGraph({
       sample.value === null ? [] : [sample.value],
     ),
   );
-  const low = Math.min(...values);
-  const high = Math.max(...values);
+  let low = Number.POSITIVE_INFINITY;
+  let high = Number.NEGATIVE_INFINITY;
+  for (const value of values) {
+    if (value < low) low = value;
+    if (value > high) high = value;
+  }
   const padding = values.length
     ? Math.max((high - low) * 0.1, Math.abs(high) * 0.01, 0.1)
     : 1;
@@ -297,6 +317,7 @@ export function LineGraph({
       !manualInputs.max.trim() ||
       !Number.isFinite(Number(manualInputs.min)) ||
       !Number.isFinite(Number(manualInputs.max)) ||
+      !Number.isFinite(Number(manualInputs.max) - Number(manualInputs.min)) ||
       Number(manualInputs.min) >= Number(manualInputs.max));
 
   function updateManual(next: { min: string; max: string }) {
@@ -308,6 +329,7 @@ export function LineGraph({
       next.max.trim() &&
       Number.isFinite(minimum) &&
       Number.isFinite(maximum) &&
+      Number.isFinite(maximum - minimum) &&
       minimum < maximum
     )
       setManualBounds({ min: minimum, max: maximum });
@@ -333,6 +355,7 @@ export function LineGraph({
         end: originalEnd,
         width,
       } = pan.current;
+      if (width <= 0) return;
       const duration = originalEnd - originalStart;
       const movedStart =
         originalStart - ((event.clientX - clientX) / width) * duration;
@@ -351,6 +374,7 @@ export function LineGraph({
 
   function selectSample(clientX: number, target: SVGSVGElement) {
     const bounds = target.getBoundingClientRect();
+    if (bounds.width <= 0) return;
     const pointerX = ((clientX - bounds.left) / bounds.width) * 600;
     if (pointerX < 2 || pointerX > 598 || !sampleTimes.length) {
       setHoverTime(null);
@@ -437,9 +461,11 @@ export function LineGraph({
           } else {
             const bounds = { min: autoMin, max: autoMax };
             setManualBounds(bounds);
+            const roundedMin = Number(autoMin.toPrecision(6));
+            const roundedMax = Number(autoMax.toPrecision(6));
             setManualInputs({
-              min: String(Number(autoMin.toPrecision(6))),
-              max: String(Number(autoMax.toPrecision(6))),
+              min: String(roundedMin < roundedMax ? roundedMin : autoMin),
+              max: String(roundedMin < roundedMax ? roundedMax : autoMax),
             });
           }
         }}
@@ -476,11 +502,12 @@ export function LineGraph({
       )}
     </div>
   );
+  const graphSummary = `Last ${timeRange} minute${timeRange === 1 ? '' : 's'}${zoomed ? ', zoomed view' : ''}: ${visible.length} series, ${values.length} valid samples${values.length ? `, range ${formatValue(low)} to ${formatValue(high)}` : ''}`;
   return (
     <div
       className="line-graph"
-      role="img"
-      aria-label={`Last ${timeRange} minute${timeRange === 1 ? '' : 's'}${zoomed ? ', zoomed view' : ''}: ${visible.length} series, ${values.length} valid samples${values.length ? `, range ${formatValue(low)} to ${formatValue(high)}` : ''}`}
+      role="region"
+      aria-label={graphSummary}
       data-view-start={start}
       data-view-end={end}
     >
@@ -572,7 +599,8 @@ export function LineGraph({
             ref={svgRef}
             viewBox="0 0 600 170"
             preserveAspectRatio="none"
-            aria-hidden="true"
+            role="img"
+            aria-label={graphSummary}
             className={zoomed ? 'can-pan' : undefined}
             onPointerDown={startPan}
             onPointerMove={movePointer}

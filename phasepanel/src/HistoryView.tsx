@@ -9,6 +9,7 @@ import { GRAPH_COLORS } from './LineGraph';
 import { Modal } from './Modal';
 import { HistoryPdfReport } from './HistoryPdfReport';
 import { downloadHistoryPdf } from './historyPdfDownload';
+import { csvCell } from './historyCsv';
 
 type HistorySource = {
   key: string;
@@ -264,6 +265,7 @@ export function HistoryPlot({
       event.preventDefault();
       setHovered(null);
       const bounds = svg.getBoundingClientRect();
+      if (bounds.width <= 0) return;
       const ratio = Math.max(
         0,
         Math.min(1, (event.clientX - bounds.left) / bounds.width),
@@ -297,6 +299,7 @@ export function HistoryPlot({
   function movePan(event: React.PointerEvent<SVGSVGElement>) {
     if (!pan.current) return;
     const { clientX, start, end, width } = pan.current;
+    if (width <= 0) return;
     const duration = end - start;
     const movedStart = start - ((event.clientX - clientX) / width) * duration;
     const nextStart = Math.max(fullStart, Math.min(now - duration, movedStart));
@@ -340,7 +343,15 @@ export function HistoryPlot({
   const low = valid.length ? Math.floor(minimum - padding) : 0;
   const high = valid.length ? Math.ceil(maximum + padding) : 1;
   const duration = view.end - view.start;
-  const timeTicks = timeGrid(view.start, view.end);
+  const timeTicks = useMemo(
+    () => timeGrid(view.start, view.end),
+    [view.start, view.end],
+  );
+  const sortedSamples = useMemo(
+    () =>
+      visible.flatMap((item) => item.samples).sort((a, b) => a.time - b.time),
+    [visible],
+  );
   const valueTicks = Array.from(
     { length: 11 },
     (_, index) => high - ((high - low) * index) / 10,
@@ -354,30 +365,29 @@ export function HistoryPlot({
       return;
     }
     const bounds = event.currentTarget.getBoundingClientRect();
+    if (bounds.width <= 0) return;
     const pointerX = ((event.clientX - bounds.left) / bounds.width) * 800;
-    const allSamples = visible.flatMap((item) => item.samples);
-    if (pointerX < 10 || pointerX > 790 || !allSamples.length) {
+    if (pointerX < 10 || pointerX > 790 || !sortedSamples.length) {
       setHovered(null);
       return;
     }
     const targetTime =
       view.start + ((pointerX - 10) / 780) * (view.end - view.start);
     let lowIndex = 0;
-    let highIndex = allSamples.length;
-    allSamples.sort((a, b) => a.time - b.time);
+    let highIndex = sortedSamples.length;
     while (lowIndex < highIndex) {
       const middle = (lowIndex + highIndex) >>> 1;
-      if (allSamples[middle].time < targetTime) lowIndex = middle + 1;
+      if (sortedSamples[middle].time < targetTime) lowIndex = middle + 1;
       else highIndex = middle;
     }
     const nearest =
-      lowIndex === allSamples.length
-        ? allSamples[allSamples.length - 1]
+      lowIndex === sortedSamples.length
+        ? sortedSamples[sortedSamples.length - 1]
         : lowIndex === 0 ||
-            allSamples[lowIndex].time - targetTime <
-              targetTime - allSamples[lowIndex - 1].time
-          ? allSamples[lowIndex]
-          : allSamples[lowIndex - 1];
+            sortedSamples[lowIndex].time - targetTime <
+              targetTime - sortedSamples[lowIndex - 1].time
+          ? sortedSamples[lowIndex]
+          : sortedSamples[lowIndex - 1];
     setHovered(
       Math.abs(x(nearest.time) - pointerX) <= 24 ? nearest.time : null,
     );
@@ -657,8 +667,14 @@ export function HistoryView({
   );
   const [keys, setKeys] = useState<string[]>([]);
   const [anchorMs, setAnchorMs] = useState<number | null>(jump?.atMs ?? null);
+  const appliedJump = useRef<HistoryJump | undefined>(undefined);
   useEffect(() => {
-    if (!jump) return;
+    if (!jump) {
+      appliedJump.current = undefined;
+      return;
+    }
+    if (appliedJump.current === jump || !options.length) return;
+    appliedJump.current = jump;
     const deviceKey = JSON.stringify([jump.project, jump.deviceId]);
     const deviceOptions = options.filter(
       (option) => option.deviceKey === deviceKey,
@@ -897,14 +913,14 @@ export function HistoryView({
         (result?.[source.key] ?? []).map((sample) =>
           [
             new Date(sample.time).toISOString(),
-            JSON.stringify(
+            csvCell(
               singlePhaseGroup
                 ? source.label.split(' · ').at(-1)
                 : source.label,
             ),
-            sample.value ?? '',
-            JSON.stringify(sample.unit ?? source.unit),
-            sample.status ?? '',
+            csvCell(sample.value),
+            csvCell(sample.unit ?? source.unit),
+            csvCell(sample.status ?? ''),
             sample.sourceTimestampNs ?? '',
           ].join(','),
         ),

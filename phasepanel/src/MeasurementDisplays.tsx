@@ -150,8 +150,12 @@ export function SparklineDisplay({
     .filter(
       (sample): sample is number => sample != null && Number.isFinite(sample),
     );
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  for (const value of values) {
+    if (value < min) min = value;
+    if (value > max) max = value;
+  }
   const spread = max - min || 1;
   const format = (number: number) =>
     number.toLocaleString('en-GB', {
